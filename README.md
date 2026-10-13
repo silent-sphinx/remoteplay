@@ -1,34 +1,44 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RemotePlay
 
-## Getting Started
+A lightweight Navidrome/Subsonic music controller designed to run on a Raspberry Pi.
 
-First, run the development server:
+Control music over the network via HTTP webpage, audio ALWAYS comes out of the server, not the web browser.
+
+> [!IMPORTANT]
+> This app is 100% vibe-coded, the code has undergone manual review.
+> This is intended as a side-hobby project to allow my Raspberry Pi to act as a music client, not a production audio server intended for deployment.
+
+## Configure
+
+Copy `.env.example` to `.env.local` and fill in the Navidrome URL, username, and password. RemotePlay uses the Subsonic token authentication flow described by Navidrome.
+
+## Run
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev -- --hostname 0.0.0.0
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://<raspberry-pi-ip>:3000` in the Pi's browser. For production, use `npm run build && npm start -- --hostname 0.0.0.0` and keep the process alive with your preferred service manager.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Server audio
 
-## Learn More
+Playback comes from the machine running RemotePlay, not the browser. Install one supported command-line player on that machine:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+# macOS
+brew install mpv
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+# Debian/Ubuntu/Raspberry Pi OS
+sudo apt install mpv
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+RemotePlay prefers `mpv`, then falls back to `ffplay` or `mpg123`. The browser is only a remote control and can be closed without stopping the server process immediately.
 
-## Deploy on Vercel
+## Included controls
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Album browsing with Navidrome cover art
+- Artist and track views
+- Album queueing and next/previous playback
+- HTML5 audio streaming through the local server
+- Volume control and responsive layout for a Pi display or phone
