@@ -252,6 +252,8 @@
 /* Device box */
 .deviceCard {
   margin-top: auto;
+  width: 100%;
+  text-align: left;
   padding: 12px 13px;
   border-radius: 10px;
   border: 1px solid var(--line);
@@ -493,6 +495,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: opacity 0.25s ease, transform 0.35s ease;
 }
 
 /* Image loading state (spinner + fade-in) */
@@ -526,13 +529,17 @@
   to { transform: rotate(360deg); }
 }
 
+.imgLoading,
+.imgReady {
+  transition: opacity 0.25s ease;
+}
+
 .imgLoading {
   opacity: 0;
 }
 
 .imgReady {
   opacity: 1;
-  transition: opacity 0.25s ease;
 }
 
 /* Vinyl placeholder */
@@ -556,9 +563,27 @@
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
-.albumCard:hover .cardPlayOverlay {
+.albumCard:hover .cardPlayOverlay,
+.albumCard:focus-within .cardPlayOverlay {
   opacity: 1;
   transform: translateY(0);
+}
+
+.albumCard:hover .albumCoverWrapper img {
+  transform: scale(1.03);
+}
+
+@media (hover: none) {
+  .cardPlayOverlay {
+    opacity: 1;
+    transform: none;
+    right: 8px;
+    bottom: 8px;
+  }
+  .cardPlayOverlay .quickPlayBtn {
+    width: 34px;
+    height: 34px;
+  }
 }
 
 .quickPlayBtn {
@@ -719,7 +744,14 @@
 }
 
 .heroBackdrop {
-  display: none;
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  filter: blur(60px) saturate(1.3);
+  opacity: 0.18;
+  transform: scale(1.4);
+  pointer-events: none;
 }
 
 .heroContent {
@@ -799,8 +831,14 @@
   transition: background-color 0.15s ease;
 }
 
-.primaryPlayBtn:hover {
+.primaryPlayBtn:hover:not(:disabled) {
   background: var(--accent-hover);
+}
+
+.primaryPlayBtn:disabled,
+.secondaryActionBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .secondaryActionBtn {
@@ -817,7 +855,7 @@
   transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
 
-.secondaryActionBtn:hover {
+.secondaryActionBtn:hover:not(:disabled) {
   border-color: var(--line-strong);
   background: rgba(255, 255, 255, 0.04);
   color: var(--ink);
@@ -831,7 +869,7 @@
 
 .trackTableHeader {
   display: grid;
-  grid-template-columns: 40px 1fr 80px 40px;
+  grid-template-columns: 40px 1fr 72px 76px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
   font-size: 11px;
@@ -843,7 +881,7 @@
 .trackRow {
   width: 100%;
   display: grid;
-  grid-template-columns: 40px 1fr 80px 40px;
+  grid-template-columns: 40px 1fr 72px 76px;
   align-items: center;
   padding: 10px 12px;
   border-bottom: 1px solid var(--line);
@@ -854,8 +892,29 @@
   transition: background-color 0.12s ease;
 }
 
-.trackRow:hover {
-  background: rgba(255, 255, 255, 0.04);
+@media (hover: hover) {
+  .trackRow:hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .trackRow:hover .trackNumberText {
+    display: none;
+  }
+  .trackRow:hover .hoverPlayIcon {
+    display: block;
+    color: var(--ink);
+  }
+  /* Secondary row actions reveal on hover to keep lists calm */
+  .trackRowActions button:first-child {
+    opacity: 0;
+  }
+  .trackRow:hover .trackRowActions button,
+  .trackRowActions button:focus-visible {
+    opacity: 1;
+  }
+}
+
+.trackRow:active {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .trackRow.activeTrack {
@@ -867,15 +926,6 @@
   color: var(--muted-dim);
   display: flex;
   align-items: center;
-}
-
-.trackRow:hover .trackNumberText {
-  display: none;
-}
-
-.trackRow:hover .hoverPlayIcon {
-  display: block;
-  color: var(--ink);
 }
 
 .hoverPlayIcon {
@@ -939,6 +989,8 @@
 
 .trackDuration {
   font-size: 12px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
   text-align: right;
   padding-right: 10px;
@@ -952,10 +1004,16 @@
 }
 
 .trackRowActions button {
-  padding: 6px;
+  padding: 7px;
   color: var(--muted-dim);
   border-radius: 6px;
-  transition: color 0.15s;
+  display: grid;
+  place-items: center;
+  transition: color 0.15s, opacity 0.15s, transform 0.15s;
+}
+
+.trackRowActions button:active {
+  transform: scale(0.88);
 }
 
 .trackRowActions button:hover {
@@ -1126,6 +1184,8 @@
   align-items: center;
   gap: 11px;
   font-size: 11px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   color: var(--muted-dim);
 }
 
@@ -1135,12 +1195,7 @@
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.1);
   position: relative;
-  cursor: pointer;
-  transition: height 0.12s ease;
-}
-
-.scrubBarTrack:hover {
-  height: 6px;
+  overflow: hidden;
 }
 
 .scrubBarFill {
@@ -1148,23 +1203,11 @@
   border-radius: 2px;
   background: var(--accent);
   position: relative;
+  transition: width 1s linear;
 }
 
 .scrubThumb {
-  position: absolute;
-  right: -5px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: #ffffff;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-.scrubBarTrack:hover .scrubThumb {
-  opacity: 1;
+  display: none;
 }
 
 /* Player right utilities */
@@ -1266,15 +1309,17 @@
   padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
 }
 
 .queueItem {
+  height: 56px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 9px 10px;
+  gap: 10px;
+  padding: 0 8px 0 2px;
   border-radius: 8px;
+  position: relative;
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -1358,6 +1403,8 @@
 
 .settingsCard {
   width: min(440px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
   border-radius: 14px;
   background: var(--bg-surface);
   border: 1px solid var(--line-strong);
@@ -1406,11 +1453,19 @@
   flex-direction: column;
   justify-content: space-between;
   padding: clamp(24px, 4vw, 48px);
+  overflow: hidden;
   animation: fadeIn 0.25s ease-out;
 }
 
 .kioskBackdrop {
-  display: none;
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  filter: blur(80px) saturate(1.3);
+  opacity: 0.2;
+  transform: scale(1.3);
+  pointer-events: none;
 }
 
 .kioskHeader {
@@ -1717,6 +1772,579 @@
   flex-shrink: 0;
 }
 
+/* Mini-player progress line (mobile only; the desktop dock shows the scrubber) */
+.miniProgress {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 0.25s linear;
+  pointer-events: none;
+}
+
+/* Mobile Now Playing sheet */
+.nowPlayingSheet {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  background: var(--bg-base);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: calc(14px + env(safe-area-inset-top)) 22px
+    calc(26px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  animation: slideInUp 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: transform 0.2s ease-out;
+}
+
+@keyframes slideInUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+/* The scaled, blurred art lives on ::before so the clip keeps it from
+   adding scrollable overflow to the sheet */
+.sheetBackdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background-size: 0 0;
+  pointer-events: none;
+}
+
+.sheetBackdrop::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: inherit;
+  background-size: cover;
+  background-position: center;
+  filter: blur(60px) saturate(1.4);
+  opacity: 0.22;
+  transform: scale(1.3);
+}
+
+.sheetHeader {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sheetEyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sheetQueueBtn {
+  position: relative;
+}
+
+.sheetArtwork {
+  position: relative;
+  z-index: 1;
+  width: min(72vw, 340px);
+  aspect-ratio: 1;
+  margin: 8px auto 0;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--bg-surface-elevated);
+  display: grid;
+  place-items: center;
+  box-shadow: var(--shadow-elevated);
+}
+
+.sheetArtwork img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sheetMeta {
+  position: relative;
+  z-index: 1;
+}
+
+.sheetTitleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.sheetTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(22px, 6vw, 30px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  line-height: 1.15;
+}
+
+.sheetArtist {
+  margin: 6px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.sheetAlbum {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.sheetFavoriteBtn {
+  flex-shrink: 0;
+  padding: 8px;
+  color: var(--muted);
+}
+
+.sheetTransport {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(14px, 6vw, 30px);
+  margin-top: 4px;
+}
+
+.sheetTransport .transportBtn {
+  padding: 12px;
+  color: var(--ink-secondary);
+}
+
+.sheetPlayBtn {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--bg-base);
+  display: grid;
+  place-items: center;
+  transition: transform 0.12s ease, background-color 0.12s ease;
+}
+
+.sheetPlayBtn:active {
+  transform: scale(0.96);
+}
+
+.sheetVolume {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.sheetVolume .volumeSlider {
+  flex: 1;
+  width: auto;
+  height: 6px;
+}
+
+/* Skeleton placeholders */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-color: transparent;
+}
+
+@keyframes shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+.skeletonLine {
+  height: 10px;
+  border-radius: 4px;
+  margin-top: 8px;
+  width: 80%;
+}
+
+.skeletonRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.skeletonThumb {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+/* Existing results dim slightly while a new filter loads */
+.refreshing {
+  opacity: 0.5;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+/* Empty states */
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 64px 20px;
+  color: var(--muted);
+  animation: fadeIn 0.2s ease-out;
+}
+
+.emptyIcon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  margin-bottom: 8px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.emptyState strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.emptyState span {
+  font-size: 12px;
+  max-width: 280px;
+  line-height: 1.5;
+}
+
+/* Section headings inside detail views */
+.sectionTitle {
+  margin: 32px 0 16px;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+/* Back link above detail heroes */
+.backBtn {
+  margin: -6px 0 16px -8px;
+  padding: 6px 10px 6px 8px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.12s ease, background-color 0.12s ease;
+}
+
+.backBtn:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Favorite state shared by row, dock and sheet hearts */
+.liked {
+  color: var(--coral) !important;
+  opacity: 1 !important;
+}
+
+.liked svg {
+  animation: heartPop 0.3s ease-out;
+}
+
+@keyframes heartPop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+.playerFavBtn {
+  padding: 6px;
+  color: var(--muted);
+  border-radius: 6px;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.playerFavBtn:hover {
+  color: var(--ink);
+}
+
+/* Search keyboard affordances */
+.searchKbd {
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+.searchHint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted-dim);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.searchActive {
+  background: rgba(255, 255, 255, 0.06) !important;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.searchArtistCard.searchActive {
+  box-shadow: none;
+  border-radius: 10px;
+}
+
+.searchArtistCard {
+  padding: 6px 2px;
+  border-radius: 10px;
+  transition: background-color 0.12s ease;
+}
+
+.searchArtistCard:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Queue extras */
+.queueSummary {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+.chipBtn {
+  padding: 5px 11px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  color: var(--ink-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.chipBtn:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.dragHandle {
+  align-self: stretch;
+  width: 22px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted-dim);
+  cursor: grab;
+  touch-action: none;
+  opacity: 0.6;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.dragHandle:hover {
+  opacity: 1;
+  color: var(--ink);
+}
+
+.queueItemShifting {
+  transition: transform 0.15s ease;
+}
+
+.queueItemDragging {
+  z-index: 2;
+  cursor: grabbing;
+  background: var(--bg-surface-elevated) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.queueItemDragging .dragHandle {
+  cursor: grabbing;
+  opacity: 1;
+  color: var(--accent);
+}
+
+.queueItem.nowPlayingItem .queueItemInfo strong {
+  color: var(--accent);
+}
+
+/* Settings extras */
+.settingHint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.statusList {
+  margin: 0;
+  padding: 4px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.statusList div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+}
+
+.statusList div + div {
+  border-top: 1px solid var(--line);
+}
+
+.statusList dt {
+  color: var(--muted);
+}
+
+.statusList dd {
+  margin: 0;
+  color: var(--ink);
+  text-align: right;
+}
+
+.shortcutList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 20px;
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.shortcutList li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.shortcutKeys {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+/* Action confirmation toast above the dock */
+.flashRegion {
+  position: fixed;
+  z-index: 110;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  max-width: calc(100vw - 32px);
+}
+
+.flash {
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--bg-base);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--shadow-elevated);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: flashIn 2.2s ease forwards;
+}
+
+@keyframes flashIn {
+  0% { opacity: 0; transform: translateY(8px); }
+  10%, 85% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(4px); }
+}
+
+/* Sheet gestures */
+.sheetHandle {
+  position: relative;
+  z-index: 1;
+  width: 38px;
+  height: 4px;
+  border-radius: 2px;
+  margin: -4px auto -6px;
+  background: var(--line-strong);
+  flex-shrink: 0;
+}
+
+.sheetDragging {
+  transition: none;
+}
+
+.sheetClosing {
+  animation: slideOutDown 0.22s ease-in forwards;
+}
+
+@keyframes slideOutDown {
+  to { transform: translateY(100%); }
+}
+
+.sheetUpNext {
+  position: relative;
+  z-index: 1;
+  margin-top: auto;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  min-width: 0;
+}
+
+.sheetUpNext small {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+
+.sheetUpNext span {
+  font-size: 13px;
+  color: var(--ink-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Responsive */
 @media (max-width: 1024px) {
   .sidebar {
@@ -1839,10 +2467,70 @@
   .playerUtilities > .iconButton {
     display: none;
   }
+  /* Thin progress line across the top of the compact dock */
+  .miniProgress {
+    display: block;
+  }
+
+  /* Detail hero stacks: artwork above meta, actions become full-width */
+  .detailHero {
+    padding: 18px;
+    gap: 18px;
+  }
+  .heroContent {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 18px;
+  }
+  .heroArtwork {
+    width: min(160px, 42vw);
+    height: min(160px, 42vw);
+  }
+  .heroActions {
+    width: 100%;
+    flex-wrap: wrap;
+    margin-top: 16px;
+  }
+  .primaryPlayBtn {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+  .heroActions .secondaryActionBtn {
+    flex: 1 1 0;
+    justify-content: center;
+  }
 
   .kioskBody {
     flex-direction: column;
     text-align: center;
+  }
+
+  /* Track rows: tighter columns, both actions always visible */
+  .trackTableHeader,
+  .trackRow {
+    grid-template-columns: 30px 1fr 44px 68px;
+    padding-left: 8px;
+    padding-right: 4px;
+  }
+  .trackDuration {
+    padding-right: 4px;
+    font-size: 11px;
+  }
+  .trackRowActions button {
+    padding: 8px;
+  }
+
+  .searchKbd,
+  .searchHint,
+  .shortcutGroup {
+    display: none;
+  }
+  .flashRegion {
+    bottom: calc(80px + env(safe-area-inset-bottom));
+  }
+  .dragHandle {
+    width: 30px;
+    opacity: 0.8;
   }
 
   /* Overlays fill the screen like native sheets */

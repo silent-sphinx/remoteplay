@@ -1,14 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import {
   Album,
   ArrowLeft,
+  ChevronDown,
   Clock,
   Disc3,
   Flame,
+  GripVertical,
   Heart,
   ListMusic,
+  ListPlus,
   LoaderCircle,
   Maximize2,
   Mic2,
@@ -18,6 +28,7 @@ import {
   Play,
   Radio,
   Repeat,
+  Repeat1,
   Search,
   Settings,
   Shuffle,
@@ -77,6 +88,31 @@ type AlbumSort =
 type TrackSort = "all" | "title" | "recent" | "starred" | "random";
 
 type ArtistSort = "az" | "za" | "albums";
+
+type View =
+  | "albums"
+  | "artists"
+  | "artistDetail"
+  | "albumDetail"
+  | "tracks"
+  | "starred";
+
+// Overlays that occupy their own browser history entry
+type Layer = "search" | "settings" | "queue" | "sheet" | "kiosk";
+
+// Shape stored in history.state so Back/Forward can rebuild the screen
+type NavEntry = {
+  rp: true;
+  view: View;
+  album?: AlbumItem;
+  artist?: Artist;
+  albumBackView?: View;
+  artistBackView?: View;
+  albumSort?: AlbumSort;
+  layers: Layer[];
+  scroll?: number;
+  root?: boolean;
+};
 
 type SearchResults = {
   artists: Artist[];
@@ -233,10 +269,95 @@ function CoverImage({
   );
 }
 
+function EqualizerBars() {
+  return (
+    <div className={styles.equalizerWave} aria-hidden="true">
+      <span className={`${styles.eqBar} ${styles.eqBar1}`} />
+      <span className={`${styles.eqBar} ${styles.eqBar2}`} />
+      <span className={`${styles.eqBar} ${styles.eqBar3}`} />
+      <span className={`${styles.eqBar} ${styles.eqBar4}`} />
+    </div>
+  );
+}
+
+// Placeholder shapes shown while library data loads
+function AlbumGridSkeleton({ count = 12 }: { count?: number }) {
+  return (
+    <div className={styles.albumGrid} aria-busy="true" aria-label="Loading">
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className={styles.albumCard}>
+          <div className={`${styles.albumCoverWrapper} ${styles.skeleton}`} />
+          <div className={`${styles.skeletonLine} ${styles.skeleton}`} />
+          <div
+            className={`${styles.skeletonLine} ${styles.skeleton}`}
+            style={{ width: "55%" }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TrackListSkeleton({ count = 8 }: { count?: number }) {
+  return (
+    <div className={styles.trackTable} aria-busy="true" aria-label="Loading">
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className={styles.skeletonRow}>
+          <div className={`${styles.skeletonThumb} ${styles.skeleton}`} />
+          <div style={{ flex: 1 }}>
+            <div
+              className={`${styles.skeletonLine} ${styles.skeleton}`}
+              style={{ width: `${70 - (i % 3) * 15}%`, marginTop: 0 }}
+            />
+            <div
+              className={`${styles.skeletonLine} ${styles.skeleton}`}
+              style={{ width: "35%" }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyState({
+  icon,
+  title,
+  hint,
+}: {
+  icon: ReactNode;
+  title: string;
+  hint?: string;
+}) {
+  return (
+    <div className={styles.emptyState}>
+      <div className={styles.emptyIcon}>{icon}</div>
+      <strong>{title}</strong>
+      {hint && <span>{hint}</span>}
+    </div>
+  );
+}
+
+const SHORTCUTS: { keys: string[]; label: string }[] = [
+  { keys: ["Space"], label: "Play / pause" },
+  { keys: ["→", "←"], label: "Next / previous track" },
+  { keys: ["↑", "↓"], label: "Host volume" },
+  { keys: ["M"], label: "Mute" },
+  { keys: ["S"], label: "Shuffle" },
+  { keys: ["R"], label: "Cycle repeat" },
+  { keys: ["Q"], label: "Toggle queue" },
+  { keys: ["F"], label: "Kiosk mode" },
+  { keys: ["/", "⌘K"], label: "Search" },
+  { keys: ["Esc"], label: "Close panel" },
+];
+
+const CURATED_SORTS: AlbumSort[] = ["starred", "recent", "frequent", "random"];
+
+// Queue rows have a fixed height so drag offsets map cleanly to indices
+const QUEUE_ROW_HEIGHT = 56;
+
 export default function Home() {
-  const [view, setView] = useState<
-    "albums" | "artists" | "artistDetail" | "albumDetail" | "tracks" | "starred"
-  >("albums");
+  const [view, setView] = useState<View>("albums");
   const [albums, setAlbums] = useState<AlbumItem[]>([]);
   const [songs, setSongs] = useState<Song[]>([]);
   const [artists, setArtists] = useState<Artist[]>([]);
@@ -279,7 +400,25 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [kioskOpen, setKioskOpen] = useState(false);
+  const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
+  const [sheetClosing, setSheetClosing] = useState(false);
+  const [sheetDrag, setSheetDrag] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
   const [clockStr, setClockStr] = useState("");
+  const [flash, setFlash] = useState<string | null>(null);
+  const [searchIndex, setSearchIndex] = useState(-1);
+  const [albumBackView, setAlbumBackView] = useState<View>("albums");
+  const [artistBackView, setArtistBackView] = useState<View>("artists");
+  const [queueDrag, setQueueDrag] = useState<{
+    from: number;
+    offset: number;
+  } | null>(null);
+
+  const libraryRef = useRef<HTMLElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const flashTimerRef = useRef<number | undefined>(undefined);
+  const sheetTouchRef = useRef<{ y: number; t: number } | null>(null);
+  const queueDragStartRef = useRef(0);
 
   // Hardware Audio Output on Host
   const [audioOutput, setAudioOutput] = useState("auto");
@@ -302,6 +441,54 @@ export default function Home() {
     const interval = window.setInterval(updateTime, 1000);
     return () => window.clearInterval(interval);
   }, []);
+
+  // Track the mobile breakpoint so the expandable Now Playing sheet is wired
+  // up only where the compact player bar hides the scrubber and controls
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 860px)");
+    const sync = () => {
+      setIsMobile(query.matches);
+      if (!query.matches) setNowPlayingOpen(false);
+    };
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  // Brief confirmation toast above the player dock
+  function showFlash(message: string) {
+    setFlash(message);
+    window.clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = window.setTimeout(() => setFlash(null), 2200);
+  }
+
+  // Animate the sheet out before unmounting it
+  function closeNowPlaying() {
+    setSheetClosing(true);
+    window.setTimeout(() => {
+      setNowPlayingOpen(false);
+      setSheetClosing(false);
+      setSheetDrag(0);
+    }, 220);
+  }
+
+  // Browser history integration: views push entries, overlays push layers
+  function pushNav(entry: Omit<NavEntry, "rp" | "layers">) {
+    const here = window.history.state as NavEntry | null;
+    if (here?.rp) {
+      window.history.replaceState(
+        { ...here, scroll: libraryRef.current?.scrollTop ?? 0 },
+        "",
+      );
+    }
+    const next: NavEntry = { rp: true, layers: [], ...entry };
+    window.history.pushState(next, "");
+  }
+
+  function replaceNav(patch: Partial<NavEntry>) {
+    const here = window.history.state as NavEntry | null;
+    if (here?.rp) window.history.replaceState({ ...here, ...patch }, "");
+  }
 
   // Load Albums
   async function loadAlbums(page = 0, sort = albumSort) {
@@ -397,11 +584,16 @@ export default function Home() {
   }
 
   // Open Album Detail
-  async function openAlbum(album: AlbumItem) {
+  async function openAlbum(album: AlbumItem, push = true) {
     try {
       setLoading("albumDetail");
       setErrorNotice(null);
+      if (push) {
+        setAlbumBackView(view);
+        pushNav({ view: "albumDetail", album, albumBackView: view });
+      }
       setSelectedAlbum(album);
+      setAlbumSongs([]);
       setView("albumDetail");
       const data = await api<{ album?: { song?: Song[] } }>("getAlbum", {
         id: album.id,
@@ -417,11 +609,17 @@ export default function Home() {
   }
 
   // Open Artist Detail
-  async function openArtist(artist: Artist) {
+  async function openArtist(artist: Artist, push = true) {
     try {
       setLoading("artistDetail");
       setErrorNotice(null);
+      if (push) {
+        setArtistBackView(view);
+        pushNav({ view: "artistDetail", artist, artistBackView: view });
+      }
       setSelectedArtist(artist);
+      setArtistAlbums([]);
+      setArtistSongs([]);
       setView("artistDetail");
       const data = await api<{ artist?: { album?: AlbumItem[] } }>(
         "getArtist",
@@ -498,7 +696,8 @@ export default function Home() {
         !player.error
       ) {
         wasPlayingRef.current = false;
-        nextSong();
+        if (repeatMode === "one" && current) void playSong(current);
+        else nextSong();
         return;
       }
 
@@ -610,14 +809,89 @@ export default function Home() {
     }
   }
 
-  // Toggle Favorite
+  // Toggle Favorite optimistically, then persist via star/unstar
   function toggleFavorite(songId: string) {
-    setLikedSongs((prev) => {
-      const next = new Set(prev);
-      if (next.has(songId)) next.delete(songId);
-      else next.add(songId);
+    const wasLiked = likedSongs.has(songId);
+    const apply = (liked: boolean) =>
+      setLikedSongs((prev) => {
+        const next = new Set(prev);
+        if (liked) next.add(songId);
+        else next.delete(songId);
+        return next;
+      });
+    apply(!wasLiked);
+    void api(wasLiked ? "unstar" : "star", { id: songId }).catch(() => {
+      apply(wasLiked);
+      showFlash("Couldn't update favorite");
+    });
+  }
+
+  function addToQueue(tracks: Song[]) {
+    if (!tracks.length) return;
+    setQueue((q) => [...q, ...tracks]);
+    showFlash(
+      tracks.length === 1
+        ? `Added "${tracks[0].title}" to queue`
+        : `Added ${tracks.length} tracks to queue`,
+    );
+  }
+
+  function moveQueueItem(from: number, to: number) {
+    if (from === to) return;
+    setQueue((q) => {
+      const next = [...q];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
       return next;
     });
+  }
+
+  // Pointer-driven reorder so the drag handle works on touch and mouse
+  function startQueueDrag(event: ReactPointerEvent, index: number) {
+    event.preventDefault();
+    event.stopPropagation();
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    queueDragStartRef.current = event.clientY;
+    setQueueDrag({ from: index, offset: 0 });
+  }
+
+  function moveQueueDrag(event: ReactPointerEvent) {
+    if (!queueDrag) return;
+    setQueueDrag({
+      from: queueDrag.from,
+      offset: event.clientY - queueDragStartRef.current,
+    });
+  }
+
+  function endQueueDrag() {
+    if (!queueDrag) return;
+    moveQueueItem(queueDrag.from, queueDropIndex(queueDrag));
+    setQueueDrag(null);
+  }
+
+  function queueDropIndex(drag: { from: number; offset: number }) {
+    const target = drag.from + Math.round(drag.offset / QUEUE_ROW_HEIGHT);
+    return Math.max(0, Math.min(queue.length - 1, target));
+  }
+
+  // Visual shift for rows the dragged item is passing over
+  function queueRowShift(index: number) {
+    if (!queueDrag) return 0;
+    if (index === queueDrag.from) return queueDrag.offset;
+    const to = queueDropIndex(queueDrag);
+    if (queueDrag.from < to && index > queueDrag.from && index <= to) {
+      return -QUEUE_ROW_HEIGHT;
+    }
+    if (queueDrag.from > to && index < queueDrag.from && index >= to) {
+      return QUEUE_ROW_HEIGHT;
+    }
+    return 0;
+  }
+
+  function cycleRepeat() {
+    setRepeatMode((prev) =>
+      prev === "off" ? "all" : prev === "all" ? "one" : "off",
+    );
   }
 
   // Albums come back already sorted by the chosen server-side filter
@@ -636,16 +910,92 @@ export default function Home() {
     return list;
   }, [artists, artistSort]);
 
+  const currentQueueIndex = current
+    ? queue.findIndex((s) => s.id === current.id)
+    : -1;
+  const upNext =
+    currentQueueIndex >= 0
+      ? queue[currentQueueIndex + 1] ||
+        (repeatMode === "all" ? queue[0] : undefined)
+      : undefined;
+
+  // Bring the playing track into view when the queue opens or advances
+  useEffect(() => {
+    if (!queueOpen) return;
+    document
+      .querySelector("[data-now-playing]")
+      ?.scrollIntoView({ block: "nearest" });
+  }, [queueOpen, currentQueueIndex]);
+
   const visibleArtists = sortedArtists.slice(0, artistPage * 50);
   const hasMoreArtists = visibleArtists.length < sortedArtists.length;
 
-  function changeView(
-    nextView: "albums" | "artists" | "artistDetail" | "albumDetail" | "tracks" | "starred",
-  ) {
+  function changeView(nextView: View, push = true) {
+    if (push && nextView !== view) pushNav({ view: nextView, albumSort });
     setView(nextView);
     if (nextView === "artists" && !artists.length) void loadArtists();
     if (nextView === "tracks" && !songs.length) void loadTracks();
   }
+
+  // Jump to an album list curated by a server-side sort
+  function openAlbumList(sort: AlbumSort) {
+    if (view !== "albums" || sort !== albumSort) {
+      pushNav({ view: "albums", albumSort: sort });
+    }
+    setAlbumSort(sort);
+    void loadAlbums(0, sort);
+    changeView("albums", false);
+  }
+
+  function viewLabel(target: View) {
+    if (target === "artistDetail") return selectedArtist?.name || "Artist";
+    if (target === "artists") return "Artists";
+    if (target === "tracks") return "Tracks";
+    return "Albums";
+  }
+
+  // In-app back buttons reuse browser history so both stay in step
+  function goBack(fallback: View) {
+    const entry = window.history.state as NavEntry | null;
+    if (entry?.rp && !entry.root) window.history.back();
+    else changeView(fallback);
+  }
+
+  // Each view starts at the top, unless Back/Forward restored a saved offset
+  const pendingScrollRef = useRef<number | null>(null);
+  useEffect(() => {
+    libraryRef.current?.scrollTo({ top: pendingScrollRef.current ?? 0 });
+    pendingScrollRef.current = null;
+  }, [view, selectedAlbum, selectedArtist]);
+
+  // Search results flattened in display order for arrow-key navigation
+  const searchActions: (() => void)[] = searchResults
+    ? [
+      ...searchResults.artists.map((artist) => () => {
+        closeSearch();
+        void openArtist(artist);
+      }),
+      ...searchResults.albums.map((album) => () => {
+        closeSearch();
+        void openAlbum(album);
+      }),
+      ...searchResults.songs.map((song) => () => {
+        const list = searchResults.songs;
+        closeSearch();
+        void playSong(song, list);
+      }),
+    ]
+    : [];
+
+  const albumOffset = searchResults?.artists.length || 0;
+  const songOffset = albumOffset + (searchResults?.albums.length || 0);
+
+  useEffect(() => {
+    if (searchIndex < 0) return;
+    document
+      .querySelector(`[data-search-index="${searchIndex}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [searchIndex]);
 
   // Initial Load
   useEffect(() => {
@@ -673,6 +1023,7 @@ export default function Home() {
         songCount: "24",
       })
         .then((data) => {
+          setSearchIndex(-1);
           setSearchResults({
             artists: data.searchResult3?.artist || [],
             albums: data.searchResult3?.album || [],
@@ -691,6 +1042,135 @@ export default function Home() {
     setSearchResults(null);
   }
 
+  const openLayers: Record<Layer, boolean> = useMemo(
+    () => ({
+      search: searchOpen,
+      settings: settingsOpen,
+      queue: queueOpen,
+      sheet: nowPlayingOpen,
+      kiosk: kioskOpen,
+    }),
+    [searchOpen, settingsOpen, queueOpen, nowPlayingOpen, kioskOpen],
+  );
+  const prevLayersRef = useRef(openLayers);
+  // Layers closed by Back itself, so the sync effect must not pop again
+  const poppedLayersRef = useRef(new Set<Layer>());
+  // Set when the app calls history.back() rather than the user
+  const expectPopRef = useRef(false);
+
+  function closeLayer(layer: Layer) {
+    if (layer === "search") closeSearch();
+    else if (layer === "settings") setSettingsOpen(false);
+    else if (layer === "queue") setQueueOpen(false);
+    else if (layer === "sheet") closeNowPlaying();
+    else setKioskOpen(false);
+  }
+
+  // Mirror overlay open/close into history so Back dismisses the top one
+  useEffect(() => {
+    const prev = prevLayersRef.current;
+    prevLayersRef.current = openLayers;
+    (Object.keys(openLayers) as Layer[]).forEach((layer) => {
+      if (openLayers[layer] === prev[layer]) return;
+      const here = window.history.state as NavEntry | null;
+      if (!here?.rp) return;
+      if (openLayers[layer]) {
+        window.history.pushState(
+          { ...here, root: false, layers: [...here.layers, layer] },
+          "",
+        );
+      } else if (poppedLayersRef.current.has(layer)) {
+        poppedLayersRef.current.delete(layer);
+      } else if (here.layers[here.layers.length - 1] === layer) {
+        expectPopRef.current = true;
+        window.history.back();
+      } else if (here.layers.includes(layer)) {
+        window.history.replaceState(
+          { ...here, layers: here.layers.filter((l) => l !== layer) },
+          "",
+        );
+      }
+    });
+  }, [openLayers]);
+
+  function handlePopState(event: PopStateEvent) {
+    const entry = event.state as NavEntry | null;
+    if (!entry?.rp) return;
+    const expected = expectPopRef.current;
+    expectPopRef.current = false;
+
+    const toClose = (Object.keys(openLayers) as Layer[]).filter(
+      (layer) => openLayers[layer] && !entry.layers.includes(layer),
+    );
+    for (const layer of toClose) {
+      poppedLayersRef.current.add(layer);
+      closeLayer(layer);
+    }
+    let changed = toClose.length > 0;
+
+    if (!expected) {
+      if (entry.view === "albumDetail" && entry.album) {
+        if (view !== "albumDetail" || selectedAlbum?.id !== entry.album.id) {
+          setAlbumBackView(entry.albumBackView ?? "albums");
+          if (selectedAlbum?.id === entry.album.id) setView("albumDetail");
+          else void openAlbum(entry.album, false);
+          changed = true;
+        }
+      } else if (entry.view === "artistDetail" && entry.artist) {
+        if (view !== "artistDetail" || selectedArtist?.id !== entry.artist.id) {
+          setArtistBackView(entry.artistBackView ?? "artists");
+          if (selectedArtist?.id === entry.artist.id) setView("artistDetail");
+          else void openArtist(entry.artist, false);
+          changed = true;
+        }
+      } else {
+        const sortChanged =
+          entry.view === "albums" && !!entry.albumSort && entry.albumSort !== albumSort;
+        if (sortChanged && entry.albumSort) {
+          setAlbumSort(entry.albumSort);
+          void loadAlbums(0, entry.albumSort);
+        }
+        if (entry.view !== view || sortChanged) {
+          changeView(entry.view, false);
+          changed = true;
+        }
+      }
+      if (changed) pendingScrollRef.current = entry.scroll ?? 0;
+    }
+
+    // Skip entries that no longer change anything on screen, such as a layer
+    // that was already closed, but never step back past the app's first entry
+    const stale =
+      entry.layers.length > 0 &&
+      entry.layers.every(
+        (layer) => !openLayers[layer] || poppedLayersRef.current.has(layer),
+      );
+    if (!entry.root && (stale || (!expected && !changed))) {
+      expectPopRef.current = true;
+      window.history.back();
+    }
+  }
+
+  const popHandlerRef = useRef<(event: PopStateEvent) => void>(() => undefined);
+  useEffect(() => {
+    popHandlerRef.current = handlePopState;
+  });
+
+  useEffect(() => {
+    // The app always boots on the album grid, so the current entry becomes its root
+    const root: NavEntry = {
+      rp: true,
+      view: "albums",
+      albumSort: "alphabeticalByName",
+      layers: [],
+      root: true,
+    };
+    window.history.replaceState(root, "");
+    const onPop = (event: PopStateEvent) => popHandlerRef.current(event);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
   // Settings Init
   useEffect(() => {
     void settingsApi<{
@@ -704,11 +1184,121 @@ export default function Home() {
       .catch(() => undefined);
   }, []);
 
+  // Seed favorites from the server's starred songs
+  useEffect(() => {
+    void api<{ starred2?: { song?: Song[] } }>("getStarred2")
+      .then((data) =>
+        setLikedSongs(new Set((data.starred2?.song || []).map((s) => s.id))),
+      )
+      .catch(() => undefined);
+  }, []);
+
+  // Reflect the current track in the browser tab
+  useEffect(() => {
+    document.title = current
+      ? `${playing ? "▶ " : ""}${current.title} · ${current.artist || "RemotePlay"}`
+      : "RemotePlay";
+  }, [current, playing]);
+
+  // The poll and key handler are bound once, so they call through refs to see
+  // the latest queue, current track and repeat mode
+  const syncRef = useRef(syncPlayer);
+  const keyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => undefined);
+
+  function handleShortcut(event: KeyboardEvent) {
+    const target = event.target as HTMLElement | null;
+    const typing =
+      target?.tagName === "INPUT" ||
+      target?.tagName === "SELECT" ||
+      target?.tagName === "TEXTAREA";
+
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+      return;
+    }
+
+    if (event.key === "Escape") {
+      if (searchOpen) closeSearch();
+      else if (settingsOpen) setSettingsOpen(false);
+      else if (nowPlayingOpen) closeNowPlaying();
+      else if (queueOpen) setQueueOpen(false);
+      else if (kioskOpen) setKioskOpen(false);
+      return;
+    }
+
+    if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+    // Let focused buttons handle their own activation keys
+    const onControl = target?.closest("button, [role='button']");
+
+    switch (event.key) {
+      case " ":
+        if (onControl) return;
+        event.preventDefault();
+        void togglePlayPause();
+        break;
+      case "ArrowRight":
+        event.preventDefault();
+        nextSong();
+        break;
+      case "ArrowLeft":
+        event.preventDefault();
+        previousSong();
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        handleVolumeChange(Math.min(1, Math.round((volume + 0.05) * 100) / 100));
+        break;
+      case "ArrowDown":
+        event.preventDefault();
+        handleVolumeChange(Math.max(0, Math.round((volume - 0.05) * 100) / 100));
+        break;
+      case "/":
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        break;
+      default:
+        switch (event.key.toLowerCase()) {
+          case "m":
+            toggleMute();
+            break;
+          case "s":
+            showFlash(isShuffle ? "Shuffle off" : "Shuffle on");
+            setIsShuffle(!isShuffle);
+            break;
+          case "r":
+            showFlash(
+              `Repeat ${repeatMode === "off" ? "all" : repeatMode === "all" ? "one" : "off"}`,
+            );
+            cycleRepeat();
+            break;
+          case "q":
+            setQueueOpen((open) => !open);
+            break;
+          case "f":
+            setKioskOpen((open) => !open);
+            break;
+        }
+    }
+  }
+
+  useEffect(() => {
+    syncRef.current = syncPlayer;
+    keyHandlerRef.current = handleShortcut;
+  });
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => keyHandlerRef.current(event);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Sync Poll with Host Server
   useEffect(() => {
-    const start = window.setTimeout(() => void syncPlayer(), 0);
-    const timer = window.setInterval(() => void syncPlayer(), 1000);
-    const onFocus = () => void syncPlayer();
+    const start = window.setTimeout(() => void syncRef.current(), 0);
+    const timer = window.setInterval(() => void syncRef.current(), 1000);
+    const onFocus = () => void syncRef.current();
     window.addEventListener("focus", onFocus);
     return () => {
       window.clearTimeout(start);
@@ -737,18 +1327,34 @@ export default function Home() {
         <label className={styles.search} htmlFor="global-search-input">
           <Search size={16} />
           <input
+            ref={searchInputRef}
             id="global-search-input"
             value={search}
+            autoComplete="off"
+            enterKeyHint="search"
             onChange={(event) => setSearch(event.target.value)}
             onFocus={() => {
               if (searchResults) setSearchOpen(true);
             }}
             onKeyDown={(event) => {
-              if (event.key === "Escape") closeSearch();
+              if (event.key === "Escape") {
+                closeSearch();
+                event.currentTarget.blur();
+              } else if (event.key === "ArrowDown" && searchActions.length) {
+                event.preventDefault();
+                setSearchIndex((i) => Math.min(searchActions.length - 1, i + 1));
+              } else if (event.key === "ArrowUp" && searchActions.length) {
+                event.preventDefault();
+                setSearchIndex((i) => Math.max(0, i - 1));
+              } else if (event.key === "Enter" && searchActions.length) {
+                event.preventDefault();
+                searchActions[Math.max(0, searchIndex)]();
+                event.currentTarget.blur();
+              }
             }}
             placeholder="Search albums, artists, or songs..."
           />
-          {search && (
+          {search ? (
             <button
               className={styles.clearSearchBtn}
               onClick={closeSearch}
@@ -756,6 +1362,8 @@ export default function Home() {
             >
               <X size={14} />
             </button>
+          ) : (
+            <kbd className={styles.searchKbd}>⌘K</kbd>
           )}
         </label>
 
@@ -800,30 +1408,51 @@ export default function Home() {
             <p className={styles.eyebrow}>LIBRARY</p>
             <nav>
               <button
-                className={`${styles.navButton} ${view === "albums" ? styles.activeNav : ""}`}
-                onClick={() => changeView("albums")}
+                className={`${styles.navButton} ${
+                  (view === "albums" && !CURATED_SORTS.includes(albumSort)) ||
+                  (view === "albumDetail" &&
+                    (albumBackView === "albums" || albumBackView === "starred"))
+                    ? styles.activeNav
+                    : ""
+                }`}
+                onClick={() => {
+                  if (CURATED_SORTS.includes(albumSort)) {
+                    openAlbumList("alphabeticalByName");
+                  } else {
+                    changeView("albums");
+                  }
+                }}
               >
                 <Album size={18} /> Albums
               </button>
               <button
-                className={`${styles.navButton} ${view === "artists" ? styles.activeNav : ""}`}
+                className={`${styles.navButton} ${
+                  view === "artists" ||
+                  view === "artistDetail" ||
+                  (view === "albumDetail" && albumBackView === "artistDetail")
+                    ? styles.activeNav
+                    : ""
+                }`}
                 onClick={() => changeView("artists")}
               >
                 <Mic2 size={18} /> Artists
               </button>
               <button
-                className={`${styles.navButton} ${view === "tracks" ? styles.activeNav : ""}`}
+                className={`${styles.navButton} ${
+                  view === "tracks" ||
+                  (view === "albumDetail" && albumBackView === "tracks")
+                    ? styles.activeNav
+                    : ""
+                }`}
                 onClick={() => changeView("tracks")}
               >
                 <ListMusic size={18} /> Tracks
               </button>
               <button
-                className={`${styles.navButton} ${view === "starred" ? styles.activeNav : ""}`}
-                onClick={() => {
-                  setAlbumSort("starred");
-                  void loadAlbums(0, "starred");
-                  changeView("albums");
-                }}
+                className={`${styles.navButton} ${
+                  view === "albums" && albumSort === "starred" ? styles.activeNav : ""
+                }`}
+                onClick={() => openAlbumList("starred")}
               >
                 <Heart size={18} /> Starred Mix
               </button>
@@ -833,44 +1462,30 @@ export default function Home() {
           <div className={styles.sidebarSection}>
             <p className={styles.eyebrow}>QUICK CURATION</p>
             <nav>
-              <button
-                className={styles.navButton}
-                onClick={() => {
-                  setAlbumSort("recent");
-                  void loadAlbums(0, "recent");
-                  changeView("albums");
-                }}
-              >
-                <Clock size={16} /> Recently Played
-              </button>
-              <button
-                className={styles.navButton}
-                onClick={() => {
-                  setAlbumSort("frequent");
-                  void loadAlbums(0, "frequent");
-                  changeView("albums");
-                }}
-              >
-                <Flame size={16} /> Most Played
-              </button>
-              <button
-                className={styles.navButton}
-                onClick={() => {
-                  setAlbumSort("random");
-                  void loadAlbums(0, "random");
-                  changeView("albums");
-                }}
-              >
-                <Sparkles size={16} /> Surprise Shuffle
-              </button>
+              {(
+                [
+                  { sort: "recent", label: "Recently Played", icon: <Clock size={16} /> },
+                  { sort: "frequent", label: "Most Played", icon: <Flame size={16} /> },
+                  { sort: "random", label: "Surprise Shuffle", icon: <Sparkles size={16} /> },
+                ] as const
+              ).map((item) => (
+                <button
+                  key={item.sort}
+                  className={`${styles.navButton} ${
+                    view === "albums" && albumSort === item.sort ? styles.activeNav : ""
+                  }`}
+                  onClick={() => openAlbumList(item.sort)}
+                >
+                  {item.icon} {item.label}
+                </button>
+              ))}
             </nav>
           </div>
 
           {/* HARDWARE DEVICE CARD */}
-          <div
+          <button
             className={styles.deviceCard}
             onClick={() => setSettingsOpen(true)}
-            style={{ cursor: "pointer" }}
             title="Click to configure host audio output sink"
           >
             <div className={styles.deviceIconBadge}>
@@ -883,11 +1498,11 @@ export default function Home() {
               </small>
             </div>
             <span className={styles.liveDot} />
-          </div>
+          </button>
         </aside>
 
         {/* LIBRARY DISPLAY */}
-        <section className={styles.library}>
+        <section className={styles.library} ref={libraryRef}>
           {/* TOAST NOTICE */}
           {errorNotice && (
             <div className={styles.toastNotice}>
@@ -931,6 +1546,7 @@ export default function Home() {
                       }`}
                       onClick={() => {
                         setAlbumSort(filter.sort);
+                        replaceNav({ albumSort: filter.sort });
                         void loadAlbums(0, filter.sort);
                       }}
                     >
@@ -942,24 +1558,25 @@ export default function Home() {
 
               {/* ALBUM CARDS GRID */}
               {loading === "albums" && !albums.length ? (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "12px",
-                    padding: "80px 0",
-                    color: "var(--muted)",
-                  }}
-                >
-                  <LoaderCircle
-                    size={24}
-                    style={{ animation: "remoteplay-spin 1s linear infinite" }}
-                  />
-                  <span>Loading album library...</span>
-                </div>
+                <AlbumGridSkeleton />
+              ) : !albums.length && !errorNotice ? (
+                <EmptyState
+                  icon={albumSort === "starred" ? <Heart size={26} /> : <Album size={26} />}
+                  title={
+                    albumSort === "starred" ? "No starred albums yet" : "No albums here"
+                  }
+                  hint={
+                    albumSort === "starred"
+                      ? "Star albums in Navidrome and they will show up here."
+                      : "Try a different filter."
+                  }
+                />
               ) : (
-                <div className={styles.albumGrid}>
+                <div
+                  className={`${styles.albumGrid} ${
+                    loading === "albums" ? styles.refreshing : ""
+                  }`}
+                >
                   {displayedAlbums.map((album) => (
                     <div
                       key={album.id}
@@ -1062,22 +1679,7 @@ export default function Home() {
               </div>
 
               {loading === "artists" && !artists.length ? (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "12px",
-                    padding: "80px 0",
-                    color: "var(--muted)",
-                  }}
-                >
-                  <LoaderCircle
-                    size={24}
-                    style={{ animation: "remoteplay-spin 1s linear infinite" }}
-                  />
-                  <span>Loading artists...</span>
-                </div>
+                <AlbumGridSkeleton />
               ) : (
                 <div className={styles.artistGrid}>
                   {visibleArtists.map((artist) => (
@@ -1122,11 +1724,11 @@ export default function Home() {
           {view === "albumDetail" && selectedAlbum && (
             <div>
               <button
-                className={styles.secondaryActionBtn}
-                style={{ marginBottom: "20px", padding: "6px 14px", fontSize: "12px" }}
-                onClick={() => changeView("albums")}
+                className={styles.backBtn}
+                onClick={() => goBack(albumBackView)}
               >
-                <ArrowLeft size={14} /> Back to Albums
+                <ArrowLeft size={14} />
+                {viewLabel(albumBackView)}
               </button>
 
               {/* HERO BANNER WITH AMBIENT BACKDROP */}
@@ -1167,6 +1769,7 @@ export default function Home() {
                     <div className={styles.heroActions}>
                       <button
                         className={styles.primaryPlayBtn}
+                        disabled={!albumSongs.length}
                         onClick={() => {
                           if (albumSongs.length > 0) {
                             void playSong(albumSongs[0], albumSongs);
@@ -1177,6 +1780,7 @@ export default function Home() {
                       </button>
                       <button
                         className={styles.secondaryActionBtn}
+                        disabled={!albumSongs.length}
                         onClick={() => {
                           if (albumSongs.length > 0) {
                             const shuffled = [...albumSongs].sort(() => Math.random() - 0.5);
@@ -1188,10 +1792,8 @@ export default function Home() {
                       </button>
                       <button
                         className={styles.secondaryActionBtn}
-                        onClick={() => {
-                          setQueue((q) => [...q, ...albumSongs]);
-                          setQueueOpen(true);
-                        }}
+                        disabled={!albumSongs.length}
+                        onClick={() => addToQueue(albumSongs)}
                       >
                         <ListMusic size={15} /> Add to Queue
                       </button>
@@ -1201,68 +1803,79 @@ export default function Home() {
               </div>
 
               {/* TRACK LIST TABLE */}
-              <div className={styles.trackTable}>
-                <div className={styles.trackTableHeader}>
-                  <span>#</span>
-                  <span>Title</span>
-                  <span style={{ textAlign: "right" }}>Duration</span>
-                  <span />
-                </div>
-                {albumSongs.map((song, index) => {
-                  const isCurrentSong = current?.id === song.id;
-                  return (
-                    <div
-                      key={song.id}
-                      className={`${styles.trackRow} ${
-                        isCurrentSong ? styles.activeTrack : ""
-                      }`}
-                      onClick={() => void playSong(song, albumSongs)}
-                    >
-                      <div className={styles.trackIndex}>
-                        {isCurrentSong && playing ? (
-                          <div className={styles.equalizerWave}>
-                            <span className={`${styles.eqBar} ${styles.eqBar1}`} />
-                            <span className={`${styles.eqBar} ${styles.eqBar2}`} />
-                            <span className={`${styles.eqBar} ${styles.eqBar3}`} />
-                            <span className={`${styles.eqBar} ${styles.eqBar4}`} />
+              {loading === "albumDetail" && !albumSongs.length ? (
+                <TrackListSkeleton />
+              ) : (
+                <div className={styles.trackTable}>
+                  <div className={styles.trackTableHeader}>
+                    <span>#</span>
+                    <span>Title</span>
+                    <span style={{ textAlign: "right" }}>Duration</span>
+                    <span />
+                  </div>
+                  {albumSongs.map((song, index) => {
+                    const isCurrentSong = current?.id === song.id;
+                    return (
+                      <div
+                        key={song.id}
+                        className={`${styles.trackRow} ${
+                          isCurrentSong ? styles.activeTrack : ""
+                        }`}
+                        onClick={() => void playSong(song, albumSongs)}
+                      >
+                        <div className={styles.trackIndex}>
+                          {isCurrentSong && playing ? (
+                            <EqualizerBars />
+                          ) : (
+                            <>
+                              <span className={styles.trackNumberText}>
+                                {String(index + 1).padStart(2, "0")}
+                              </span>
+                              <Play size={14} className={styles.hoverPlayIcon} fill="currentColor" />
+                            </>
+                          )}
+                        </div>
+                        <div className={styles.trackMain}>
+                          <div className={styles.trackMeta}>
+                            <strong>{song.title}</strong>
+                            <small>{song.artist || selectedAlbum.artist}</small>
                           </div>
-                        ) : (
-                          <>
-                            <span className={styles.trackNumberText}>
-                              {String(index + 1).padStart(2, "0")}
-                            </span>
-                            <Play size={14} className={styles.hoverPlayIcon} fill="currentColor" />
-                          </>
-                        )}
-                      </div>
-                      <div className={styles.trackMain}>
-                        <div className={styles.trackMeta}>
-                          <strong>{song.title}</strong>
-                          <small>{song.artist || selectedAlbum.artist}</small>
+                        </div>
+                        <span className={styles.trackDuration}>
+                          {formatTime(song.duration)}
+                        </span>
+                        <div className={styles.trackRowActions}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              addToQueue([song]);
+                            }}
+                            aria-label="Add to queue"
+                            title="Add to queue"
+                          >
+                            <ListPlus size={16} />
+                          </button>
+                          <button
+                            className={likedSongs.has(song.id) ? styles.liked : ""}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFavorite(song.id);
+                            }}
+                            aria-label={likedSongs.has(song.id) ? "Unfavorite track" : "Favorite track"}
+                            aria-pressed={likedSongs.has(song.id)}
+                          >
+                            <Heart
+                              size={15}
+                              fill={likedSongs.has(song.id) ? "var(--coral)" : "none"}
+                              color={likedSongs.has(song.id) ? "var(--coral)" : "currentColor"}
+                            />
+                          </button>
                         </div>
                       </div>
-                      <span className={styles.trackDuration}>
-                        {formatTime(song.duration)}
-                      </span>
-                      <div className={styles.trackRowActions}>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleFavorite(song.id);
-                          }}
-                          aria-label="Favorite track"
-                        >
-                          <Heart
-                            size={15}
-                            fill={likedSongs.has(song.id) ? "var(--coral)" : "none"}
-                            color={likedSongs.has(song.id) ? "var(--coral)" : "currentColor"}
-                          />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -1270,11 +1883,10 @@ export default function Home() {
           {view === "artistDetail" && selectedArtist && (
             <div>
               <button
-                className={styles.secondaryActionBtn}
-                style={{ marginBottom: "20px", padding: "6px 14px", fontSize: "12px" }}
-                onClick={() => changeView("artists")}
+                className={styles.backBtn}
+                onClick={() => goBack(artistBackView)}
               >
-                <ArrowLeft size={14} /> Back to Artists
+                <ArrowLeft size={14} /> {viewLabel(artistBackView)}
               </button>
 
               <div className={styles.detailHero}>
@@ -1313,102 +1925,124 @@ export default function Home() {
               </div>
 
               {/* Discography Albums */}
-              <h3 style={{ margin: "28px 0 16px", fontFamily: "var(--font-display)" }}>
-                Albums
-              </h3>
-              <div className={styles.albumGrid}>
-                {artistAlbums.map((album) => (
-                  <div
-                    key={album.id}
-                    className={styles.albumCard}
-                    onClick={() => void openAlbum(album)}
-                  >
-                    <div className={styles.albumCoverWrapper}>
-                      <CoverImage
-                        src={coverArtUrl(album.coverArt, "400")}
-                        alt={album.name}
-                        spinnerSize={22}
-                        fallback={
-                          <div className={styles.vinylPlaceholder}>
-                            <Disc3 size={38} />
-                          </div>
-                        }
-                      />
-                      <div
-                        className={styles.cardPlayOverlay}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void playAlbumImmediately(album);
-                        }}
-                      >
-                        <button className={styles.quickPlayBtn} aria-label="Play album on host">
-                          <Play size={20} fill="currentColor" />
-                        </button>
-                      </div>
-                    </div>
-                    <strong>{album.name}</strong>
-                    <span>{album.year || ""}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Tracks List */}
-              <h3 style={{ margin: "38px 0 16px", fontFamily: "var(--font-display)" }}>
-                All Tracks
-              </h3>
-              <div className={styles.trackTable}>
-                {artistSongs.map((song, index) => {
-                  const isCurrentSong = current?.id === song.id;
-                  return (
+              <h3 className={styles.sectionTitle}>Albums</h3>
+              {loading === "artistDetail" && !artistAlbums.length ? (
+                <AlbumGridSkeleton count={6} />
+              ) : (
+                <div className={styles.albumGrid}>
+                  {artistAlbums.map((album) => (
                     <div
-                      key={song.id}
-                      className={`${styles.trackRow} ${
-                        isCurrentSong ? styles.activeTrack : ""
-                      }`}
-                      onClick={() => void playSong(song, artistSongs)}
+                      key={album.id}
+                      className={styles.albumCard}
+                      onClick={() => void openAlbum(album)}
                     >
-                      <div className={styles.trackIndex}>
-                        <span className={styles.trackNumberText}>
-                          {String(index + 1).padStart(2, "0")}
-                        </span>
-                        <Play size={14} className={styles.hoverPlayIcon} fill="currentColor" />
-                      </div>
-                      <div className={styles.trackMain}>
-                        <div className={styles.trackThumb}>
-                          <CoverImage
-                            src={coverArtUrl(song.coverArt, "120")}
-                            alt=""
-                            spinnerSize={14}
-                            fallback={<Music size={16} />}
-                          />
-                        </div>
-                        <div className={styles.trackMeta}>
-                          <strong>{song.title}</strong>
-                          <small>{song.album}</small>
-                        </div>
-                      </div>
-                      <span className={styles.trackDuration}>
-                        {formatTime(song.duration)}
-                      </span>
-                      <div className={styles.trackRowActions}>
-                        <button
+                      <div className={styles.albumCoverWrapper}>
+                        <CoverImage
+                          src={coverArtUrl(album.coverArt, "400")}
+                          alt={album.name}
+                          spinnerSize={22}
+                          fallback={
+                            <div className={styles.vinylPlaceholder}>
+                              <Disc3 size={38} />
+                            </div>
+                          }
+                        />
+                        <div
+                          className={styles.cardPlayOverlay}
                           onClick={(e) => {
                             e.stopPropagation();
-                            toggleFavorite(song.id);
+                            void playAlbumImmediately(album);
                           }}
-                          aria-label="Favorite"
                         >
-                          <Heart
-                            size={15}
-                            fill={likedSongs.has(song.id) ? "var(--coral)" : "none"}
-                            color={likedSongs.has(song.id) ? "var(--coral)" : "currentColor"}
-                          />
-                        </button>
+                          <button className={styles.quickPlayBtn} aria-label="Play album on host">
+                            <Play size={20} fill="currentColor" />
+                          </button>
+                        </div>
                       </div>
+                      <strong>{album.name}</strong>
+                      <span>{album.year || ""}</span>
                     </div>
-                  );
-                })}
-              </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Tracks List */}
+              <h3 className={styles.sectionTitle}>All Tracks</h3>
+              {loading === "artistDetail" && !artistSongs.length ? (
+                <TrackListSkeleton />
+              ) : (
+                <div className={styles.trackTable}>
+                  {artistSongs.map((song, index) => {
+                    const isCurrentSong = current?.id === song.id;
+                    return (
+                      <div
+                        key={song.id}
+                        className={`${styles.trackRow} ${
+                          isCurrentSong ? styles.activeTrack : ""
+                        }`}
+                        onClick={() => void playSong(song, artistSongs)}
+                      >
+                        <div className={styles.trackIndex}>
+                          {isCurrentSong && playing ? (
+                            <EqualizerBars />
+                          ) : (
+                            <>
+                              <span className={styles.trackNumberText}>
+                                {String(index + 1).padStart(2, "0")}
+                              </span>
+                              <Play size={14} className={styles.hoverPlayIcon} fill="currentColor" />
+                            </>
+                          )}
+                        </div>
+                        <div className={styles.trackMain}>
+                          <div className={styles.trackThumb}>
+                            <CoverImage
+                              src={coverArtUrl(song.coverArt, "120")}
+                              alt=""
+                              spinnerSize={14}
+                              fallback={<Music size={16} />}
+                            />
+                          </div>
+                          <div className={styles.trackMeta}>
+                            <strong>{song.title}</strong>
+                            <small>{song.album}</small>
+                          </div>
+                        </div>
+                        <span className={styles.trackDuration}>
+                          {formatTime(song.duration)}
+                        </span>
+                        <div className={styles.trackRowActions}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              addToQueue([song]);
+                            }}
+                            aria-label="Add to queue"
+                            title="Add to queue"
+                          >
+                            <ListPlus size={16} />
+                          </button>
+                          <button
+                            className={likedSongs.has(song.id) ? styles.liked : ""}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFavorite(song.id);
+                            }}
+                            aria-label={likedSongs.has(song.id) ? "Unfavorite track" : "Favorite track"}
+                            aria-pressed={likedSongs.has(song.id)}
+                          >
+                            <Heart
+                              size={15}
+                              fill={likedSongs.has(song.id) ? "var(--coral)" : "none"}
+                              color={likedSongs.has(song.id) ? "var(--coral)" : "currentColor"}
+                            />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -1441,22 +2075,17 @@ export default function Home() {
               </div>
 
               {loading === "tracks" && !songs.length ? (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "12px",
-                    padding: "80px 0",
-                    color: "var(--muted)",
-                  }}
-                >
-                  <LoaderCircle
-                    size={24}
-                    style={{ animation: "remoteplay-spin 1s linear infinite" }}
-                  />
-                  <span>Loading tracks...</span>
-                </div>
+                <TrackListSkeleton count={10} />
+              ) : !songs.length && !errorNotice ? (
+                <EmptyState
+                  icon={trackSort === "starred" ? <Heart size={26} /> : <Music size={26} />}
+                  title={trackSort === "starred" ? "No starred tracks yet" : "No tracks found"}
+                  hint={
+                    trackSort === "starred"
+                      ? "Tap the heart on any track to star it."
+                      : undefined
+                  }
+                />
               ) : (
                 <div className={styles.trackTable}>
                   <div className={styles.trackTableHeader}>
@@ -1477,12 +2106,7 @@ export default function Home() {
                       >
                         <div className={styles.trackIndex}>
                           {isCurrentSong && playing ? (
-                            <div className={styles.equalizerWave}>
-                              <span className={`${styles.eqBar} ${styles.eqBar1}`} />
-                              <span className={`${styles.eqBar} ${styles.eqBar2}`} />
-                              <span className={`${styles.eqBar} ${styles.eqBar3}`} />
-                              <span className={`${styles.eqBar} ${styles.eqBar4}`} />
-                            </div>
+                            <EqualizerBars />
                           ) : (
                             <>
                               <span className={styles.trackNumberText}>
@@ -1519,9 +2143,21 @@ export default function Home() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
+                              addToQueue([song]);
+                            }}
+                            aria-label="Add to queue"
+                            title="Add to queue"
+                          >
+                            <ListPlus size={16} />
+                          </button>
+                          <button
+                            className={likedSongs.has(song.id) ? styles.liked : ""}
+                            onClick={(e) => {
+                              e.stopPropagation();
                               toggleFavorite(song.id);
                             }}
-                            aria-label="Favorite track"
+                            aria-label={likedSongs.has(song.id) ? "Unfavorite track" : "Favorite track"}
+                            aria-pressed={likedSongs.has(song.id)}
                           >
                             <Heart
                               size={15}
@@ -1568,6 +2204,10 @@ export default function Home() {
               <span>
                 Results for <strong>{search.trim()}</strong>
               </span>
+              <span className={styles.searchHint}>
+                <kbd>↑</kbd>
+                <kbd>↓</kbd> to move · <kbd>↵</kbd> to open
+              </span>
               <button
                 className={styles.toastCloseBtn}
                 onClick={closeSearch}
@@ -1601,14 +2241,14 @@ export default function Home() {
                       <div className={styles.searchSection}>
                         <p className={styles.searchSectionTitle}>Artists</p>
                         <div className={styles.searchArtistRow}>
-                          {searchResults.artists.map((artist) => (
+                          {searchResults.artists.map((artist, i) => (
                             <button
                               key={artist.id}
-                              className={styles.searchArtistCard}
-                              onClick={() => {
-                                closeSearch();
-                                void openArtist(artist);
-                              }}
+                              data-search-index={i}
+                              className={`${styles.searchArtistCard} ${
+                                searchIndex === i ? styles.searchActive : ""
+                              }`}
+                              onClick={searchActions[i]}
                             >
                               <div className={styles.searchArtistAvatar}>
                                 <CoverImage
@@ -1634,14 +2274,14 @@ export default function Home() {
                       <div className={styles.searchSection}>
                         <p className={styles.searchSectionTitle}>Albums</p>
                         <div className={styles.searchResultList}>
-                          {searchResults.albums.map((album) => (
+                          {searchResults.albums.map((album, i) => (
                             <button
                               key={album.id}
-                              className={styles.searchResultItem}
-                              onClick={() => {
-                                closeSearch();
-                                void openAlbum(album);
-                              }}
+                              data-search-index={albumOffset + i}
+                              className={`${styles.searchResultItem} ${
+                                searchIndex === albumOffset + i ? styles.searchActive : ""
+                              }`}
+                              onClick={searchActions[albumOffset + i]}
                             >
                               <div className={styles.searchResultThumb}>
                                 <CoverImage
@@ -1665,15 +2305,14 @@ export default function Home() {
                       <div className={styles.searchSection}>
                         <p className={styles.searchSectionTitle}>Songs</p>
                         <div className={styles.searchResultList}>
-                          {searchResults.songs.map((song) => (
+                          {searchResults.songs.map((song, i) => (
                             <button
                               key={song.id}
-                              className={styles.searchResultItem}
-                              onClick={() => {
-                                const list = searchResults.songs;
-                                closeSearch();
-                                void playSong(song, list);
-                              }}
+                              data-search-index={songOffset + i}
+                              className={`${styles.searchResultItem} ${
+                                searchIndex === songOffset + i ? styles.searchActive : ""
+                              }`}
+                              onClick={searchActions[songOffset + i]}
                             >
                               <div className={styles.searchResultThumb}>
                                 <CoverImage
@@ -1708,8 +2347,49 @@ export default function Home() {
 
       {/* NOW PLAYING FLOATING DOCK */}
       <footer className={styles.player}>
-        {/* Left: Track Details */}
-        <div className={styles.nowPlayingInfo}>
+        {/* Mobile-only progress line pinned to the top edge of the dock */}
+        <div
+          className={styles.miniProgress}
+          style={{
+            transform: `scaleX(${
+              current?.duration
+                ? Math.min(1, currentTime / current.duration)
+                : 0
+            })`,
+          }}
+        />
+
+        {/* Left: Track Details (tap to expand Now Playing on mobile) */}
+        <div
+          className={styles.nowPlayingInfo}
+          role={isMobile && current ? "button" : undefined}
+          tabIndex={isMobile && current ? 0 : undefined}
+          aria-label={isMobile && current ? "Open now playing" : undefined}
+          onClick={() => {
+            if (isMobile && current) setNowPlayingOpen(true);
+          }}
+          onTouchStart={(event) => {
+            sheetTouchRef.current = { y: event.touches[0].clientY, t: Date.now() };
+          }}
+          onTouchEnd={(event) => {
+            const start = sheetTouchRef.current;
+            sheetTouchRef.current = null;
+            if (!start || !isMobile || !current) return;
+            if (start.y - event.changedTouches[0].clientY > 30) {
+              setNowPlayingOpen(true);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (
+              isMobile &&
+              current &&
+              (event.key === "Enter" || event.key === " ")
+            ) {
+              event.preventDefault();
+              setNowPlayingOpen(true);
+            }
+          }}
+        >
           {current ? (
             <>
               <div className={styles.playerThumb}>
@@ -1734,9 +2414,15 @@ export default function Home() {
                 <span>{current.artist || "Unknown Artist"}</span>
               </div>
               <button
-                onClick={() => toggleFavorite(current.id)}
-                style={{ padding: "6px", color: "var(--muted)" }}
+                className={`${styles.playerFavBtn} ${
+                  likedSongs.has(current.id) ? styles.liked : ""
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleFavorite(current.id);
+                }}
                 aria-label="Favorite now playing track"
+                aria-pressed={likedSongs.has(current.id)}
               >
                 <Heart
                   size={16}
@@ -1760,6 +2446,7 @@ export default function Home() {
               className={`${styles.transportBtn} ${isShuffle ? styles.activeToggle : ""}`}
               onClick={() => setIsShuffle(!isShuffle)}
               aria-label="Toggle Shuffle"
+              aria-pressed={isShuffle}
               title="Shuffle"
             >
               <Shuffle size={16} />
@@ -1793,15 +2480,11 @@ export default function Home() {
               className={`${styles.transportBtn} ${
                 repeatMode !== "off" ? styles.activeToggle : ""
               }`}
-              onClick={() => {
-                setRepeatMode((prev) =>
-                  prev === "off" ? "all" : prev === "all" ? "one" : "off",
-                );
-              }}
-              aria-label="Toggle Repeat"
+              onClick={cycleRepeat}
+              aria-label={`Repeat: ${repeatMode}`}
               title={`Repeat: ${repeatMode}`}
             >
-              <Repeat size={16} />
+              {repeatMode === "one" ? <Repeat1 size={16} /> : <Repeat size={16} />}
             </button>
           </div>
 
@@ -1829,14 +2512,7 @@ export default function Home() {
         {/* Right: Audio Visualizer & Utilities */}
         <div className={styles.playerUtilities}>
           {/* Animated soundwave bars when playing */}
-          {playing && (
-            <div className={styles.equalizerWave} style={{ marginRight: "4px" }}>
-              <span className={`${styles.eqBar} ${styles.eqBar1}`} />
-              <span className={`${styles.eqBar} ${styles.eqBar2}`} />
-              <span className={`${styles.eqBar} ${styles.eqBar3}`} />
-              <span className={`${styles.eqBar} ${styles.eqBar4}`} />
-            </div>
-          )}
+          {playing && <EqualizerBars />}
 
           {/* Volume Control */}
           <div className={styles.volumeControl}>
@@ -1881,27 +2557,251 @@ export default function Home() {
         </div>
       </footer>
 
+      {/* MOBILE NOW PLAYING SHEET (recovers the controls the compact bar hides) */}
+      {isMobile && nowPlayingOpen && current && (
+        <div
+          className={`${styles.nowPlayingSheet} ${
+            sheetClosing ? styles.sheetClosing : ""
+          } ${sheetDrag ? styles.sheetDragging : ""}`}
+          style={sheetDrag ? { transform: `translateY(${sheetDrag}px)` } : undefined}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Now playing"
+          onTouchStart={(event) => {
+            // Only begin a dismiss gesture when the sheet is scrolled to the top
+            if (event.currentTarget.scrollTop > 0) return;
+            if ((event.target as HTMLElement).closest("input")) return;
+            sheetTouchRef.current = { y: event.touches[0].clientY, t: Date.now() };
+          }}
+          onTouchMove={(event) => {
+            const start = sheetTouchRef.current;
+            if (!start) return;
+            setSheetDrag(Math.max(0, event.touches[0].clientY - start.y));
+          }}
+          onTouchEnd={() => {
+            const start = sheetTouchRef.current;
+            sheetTouchRef.current = null;
+            if (!start) return;
+            const velocity = sheetDrag / Math.max(1, Date.now() - start.t);
+            if (sheetDrag > 140 || (sheetDrag > 40 && velocity > 0.6)) {
+              closeNowPlaying();
+            } else {
+              setSheetDrag(0);
+            }
+          }}
+        >
+          <div className={styles.sheetHandle} aria-hidden="true" />
+          {current.coverArt && (
+            <div
+              className={styles.sheetBackdrop}
+              style={{
+                backgroundImage: `url(${coverArtUrl(current.coverArt, "640")})`,
+              }}
+            />
+          )}
+
+          <div className={styles.sheetHeader}>
+            <button
+              className={styles.iconButton}
+              onClick={closeNowPlaying}
+              aria-label="Close now playing"
+            >
+              <ChevronDown size={20} />
+            </button>
+            <span className={styles.sheetEyebrow}>Now Playing</span>
+            <button
+              className={`${styles.iconButton} ${styles.sheetQueueBtn}`}
+              onClick={() => {
+                closeNowPlaying();
+                setQueueOpen(true);
+              }}
+              aria-label="Open queue"
+            >
+              <ListMusic size={18} />
+              {queue.length > 0 && (
+                <span className={styles.queueCount}>{queue.length}</span>
+              )}
+            </button>
+          </div>
+
+          <div className={styles.sheetArtwork}>
+            <CoverImage
+              src={coverArtUrl(current.coverArt, "640")}
+              alt={current.title}
+              spinnerSize={40}
+              fallback={
+                <Disc3
+                  size={96}
+                  color="var(--accent)"
+                  style={{
+                    animation: playing
+                      ? "remoteplay-spin 15s linear infinite"
+                      : "none",
+                  }}
+                />
+              }
+            />
+          </div>
+
+          <div className={styles.sheetMeta}>
+            <div className={styles.sheetTitleRow}>
+              <div style={{ minWidth: 0 }}>
+                <h2 className={styles.sheetTitle}>{current.title}</h2>
+                <p className={styles.sheetArtist}>
+                  {current.artist || "Unknown Artist"}
+                </p>
+                {current.album && (
+                  <p className={styles.sheetAlbum}>{current.album}</p>
+                )}
+              </div>
+              <button
+                className={styles.sheetFavoriteBtn}
+                onClick={() => toggleFavorite(current.id)}
+                aria-label="Favorite track"
+              >
+                <Heart
+                  size={22}
+                  fill={likedSongs.has(current.id) ? "var(--coral)" : "none"}
+                  color={
+                    likedSongs.has(current.id) ? "var(--coral)" : "currentColor"
+                  }
+                />
+              </button>
+            </div>
+          </div>
+
+          {/* Progress (display only; the host backend has no seek) */}
+          <div className={styles.progressScrubber} style={{ maxWidth: "none" }}>
+            <span>{formatTime(currentTime)}</span>
+            <div className={styles.scrubBarTrack} style={{ height: "6px" }}>
+              <div
+                className={styles.scrubBarFill}
+                style={{
+                  width: `${
+                    current.duration
+                      ? Math.min(100, (currentTime / current.duration) * 100)
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+            <span>{formatTime(current.duration)}</span>
+          </div>
+
+          {/* Full transport */}
+          <div className={styles.sheetTransport}>
+            <button
+              className={`${styles.transportBtn} ${
+                isShuffle ? styles.activeToggle : ""
+              }`}
+              onClick={() => setIsShuffle(!isShuffle)}
+              aria-label="Toggle shuffle"
+              aria-pressed={isShuffle}
+            >
+              <Shuffle size={20} />
+            </button>
+            <button
+              className={styles.transportBtn}
+              onClick={previousSong}
+              aria-label="Previous track"
+            >
+              <SkipBack size={26} fill="currentColor" />
+            </button>
+            <button
+              className={styles.sheetPlayBtn}
+              onClick={() => void togglePlayPause()}
+              aria-label={playing ? "Pause" : "Play"}
+            >
+              {playing ? (
+                <Pause size={28} fill="currentColor" />
+              ) : (
+                <Play size={28} fill="currentColor" style={{ marginLeft: "3px" }} />
+              )}
+            </button>
+            <button
+              className={styles.transportBtn}
+              onClick={nextSong}
+              aria-label="Next track"
+            >
+              <SkipForward size={26} fill="currentColor" />
+            </button>
+            <button
+              className={`${styles.transportBtn} ${
+                repeatMode !== "off" ? styles.activeToggle : ""
+              }`}
+              onClick={cycleRepeat}
+              aria-label={`Repeat: ${repeatMode}`}
+              title={`Repeat: ${repeatMode}`}
+            >
+              {repeatMode === "one" ? <Repeat1 size={20} /> : <Repeat size={20} />}
+            </button>
+          </div>
+
+          {/* Host volume */}
+          <div className={styles.sheetVolume}>
+            <button onClick={toggleMute} aria-label={isMuted ? "Unmute" : "Mute"}>
+              {isMuted || volume === 0 ? (
+                <VolumeX size={18} />
+              ) : (
+                <Volume2 size={18} />
+              )}
+            </button>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={isMuted ? 0 : volume}
+              onChange={(e) => handleVolumeChange(Number(e.target.value))}
+              className={styles.volumeSlider}
+              aria-label="Host volume slider"
+            />
+          </div>
+
+          {upNext && !isShuffle && (
+            <button
+              className={styles.sheetUpNext}
+              onClick={() => {
+                closeNowPlaying();
+                setQueueOpen(true);
+              }}
+            >
+              <small>Up next</small>
+              <span>
+                {upNext.title}
+                {upNext.artist ? ` · ${upNext.artist}` : ""}
+              </span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* QUEUE DRAWER */}
       {queueOpen && (
-        <aside className={styles.queueDrawer}>
+        <aside className={styles.queueDrawer} aria-label="Playback queue">
           <div className={styles.queueHeader}>
             <div>
-              <h3>Host Playback Queue</h3>
-              <small style={{ color: "var(--muted)", font: "11px var(--mono)" }}>
-                {queue.length} tracks ·{" "}
-                {formatTotalDuration(
-                  queue.reduce((sum, s) => sum + (s.duration || 0), 0),
-                )}
+              <h3>Queue</h3>
+              <small className={styles.queueSummary}>
+                {queue.length} tracks
+                {queue.length > 0 &&
+                  ` · ${formatTotalDuration(
+                    queue.reduce((sum, s) => sum + (s.duration || 0), 0),
+                  )}`}
               </small>
             </div>
             <div className={styles.queueActions}>
-              <button
-                className={styles.secondaryActionBtn}
-                style={{ padding: "4px 10px", fontSize: "11px" }}
-                onClick={() => setQueue([])}
-              >
-                Clear
-              </button>
+              {queue.length > 0 && (
+                <button
+                  className={styles.chipBtn}
+                  onClick={() => {
+                    setQueue([]);
+                    showFlash("Queue cleared");
+                  }}
+                >
+                  Clear
+                </button>
+              )}
               <button
                 className={styles.toastCloseBtn}
                 onClick={() => setQueueOpen(false)}
@@ -1911,45 +2811,75 @@ export default function Home() {
               </button>
             </div>
           </div>
-          <div className={styles.queueList}>
-            {queue.map((song, idx) => {
-              const isNow = current?.id === song.id;
-              return (
-                <div
-                  key={`${song.id}-${idx}`}
-                  className={`${styles.queueItem} ${
-                    isNow ? styles.nowPlayingItem : ""
-                  }`}
-                  onClick={() => void playSong(song)}
-                >
-                  <div className={styles.queueItemThumb}>
-                    <CoverImage
-                      src={coverArtUrl(song.coverArt, "100")}
-                      alt=""
-                      spinnerSize={14}
-                      fallback={<Music size={16} />}
-                    />
-                  </div>
-                  <div className={styles.queueItemInfo}>
-                    <strong>{song.title}</strong>
-                    <small>
-                      {song.artist} · {formatTime(song.duration)}
-                    </small>
-                  </div>
-                  <button
-                    className={styles.removeQueueBtn}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setQueue((q) => q.filter((_, i) => i !== idx));
-                    }}
-                    aria-label="Remove from queue"
+          {queue.length === 0 ? (
+            <EmptyState
+              icon={<ListMusic size={26} />}
+              title="Your queue is empty"
+              hint="Use the + on any track, or Add to Queue on an album."
+            />
+          ) : (
+            <div className={styles.queueList}>
+              {queue.map((song, idx) => {
+                const isNow = idx === currentQueueIndex;
+                const isDragging = queueDrag?.from === idx;
+                const shift = queueRowShift(idx);
+                return (
+                  <div
+                    key={`${song.id}-${idx}`}
+                    data-now-playing={isNow || undefined}
+                    className={`${styles.queueItem} ${
+                      isNow ? styles.nowPlayingItem : ""
+                    } ${isDragging ? styles.queueItemDragging : ""} ${
+                      queueDrag && !isDragging ? styles.queueItemShifting : ""
+                    }`}
+                    style={shift ? { transform: `translateY(${shift}px)` } : undefined}
+                    onClick={() => void playSong(song)}
                   >
-                    <X size={14} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                    <span
+                      className={styles.dragHandle}
+                      onPointerDown={(e) => startQueueDrag(e, idx)}
+                      onPointerMove={moveQueueDrag}
+                      onPointerUp={endQueueDrag}
+                      onPointerCancel={() => setQueueDrag(null)}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label="Drag to reorder"
+                      title="Drag to reorder"
+                    >
+                      <GripVertical size={14} />
+                    </span>
+                    <div className={styles.queueItemThumb}>
+                      {isNow && playing ? (
+                        <EqualizerBars />
+                      ) : (
+                        <CoverImage
+                          src={coverArtUrl(song.coverArt, "100")}
+                          alt=""
+                          spinnerSize={14}
+                          fallback={<Music size={16} />}
+                        />
+                      )}
+                    </div>
+                    <div className={styles.queueItemInfo}>
+                      <strong>{song.title}</strong>
+                      <small>
+                        {song.artist} · {formatTime(song.duration)}
+                      </small>
+                    </div>
+                    <button
+                      className={styles.removeQueueBtn}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setQueue((q) => q.filter((_, i) => i !== idx));
+                      }}
+                      aria-label="Remove from queue"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </aside>
       )}
 
@@ -1961,6 +2891,9 @@ export default function Home() {
         >
           <div
             className={styles.settingsCard}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Host audio settings"
             onClick={(e) => e.stopPropagation()}
           >
             <div className={styles.modalHeader}>
@@ -1996,37 +2929,42 @@ export default function Home() {
                   </option>
                 ))}
               </select>
-              <small style={{ color: "var(--muted)", fontSize: "11px" }}>
+              <small className={styles.settingHint}>
                 Select physical audio output on the Raspberry Pi (DAC, HDMI, or 3.5mm Headphone Jack).
               </small>
             </div>
 
             {/* Status Information */}
-            <div
-              style={{
-                padding: "14px",
-                borderRadius: "10px",
-                background: "rgba(255, 255, 255, 0.03)",
-                border: "1px solid var(--line)",
-                fontSize: "12px",
-                color: "var(--muted)",
-                display: "flex",
-                flexDirection: "column",
-                gap: "6px",
-              }}
-            >
+            <dl className={styles.statusList}>
               <div>
-                <strong style={{ color: "var(--ink)" }}>Host Environment: </strong>
-                Raspberry Pi / Linux Audio Server
+                <dt>Host environment</dt>
+                <dd>Raspberry Pi / Linux</dd>
               </div>
               <div>
-                <strong style={{ color: "var(--ink)" }}>Playback Device: </strong>
-                Host Speaker Output Only
+                <dt>Playback device</dt>
+                <dd>Host speaker only</dd>
               </div>
               <div>
-                <strong style={{ color: "var(--ink)" }}>Navidrome Connection: </strong>
-                Online · Subsonic API 1.16.1
+                <dt>Navidrome</dt>
+                <dd>Subsonic API 1.16.1</dd>
               </div>
+            </dl>
+
+            {/* Keyboard shortcuts (hidden on touch layouts) */}
+            <div className={`${styles.settingGroup} ${styles.shortcutGroup}`}>
+              <span className={styles.settingLabel}>Keyboard shortcuts</span>
+              <ul className={styles.shortcutList}>
+                {SHORTCUTS.map((shortcut) => (
+                  <li key={shortcut.label}>
+                    <span>{shortcut.label}</span>
+                    <span className={styles.shortcutKeys}>
+                      {shortcut.keys.map((key) => (
+                        <kbd key={key}>{key}</kbd>
+                      ))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
         </div>
@@ -2175,6 +3113,15 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* ACTION CONFIRMATION */}
+      <div className={styles.flashRegion} role="status" aria-live="polite">
+        {flash && (
+          <div key={flash} className={styles.flash}>
+            {flash}
+          </div>
+        )}
+      </div>
     </main>
   );
 }
