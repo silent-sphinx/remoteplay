@@ -4,13 +4,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Album,
   ArrowLeft,
-  ChevronRight,
   Clock,
   Disc3,
   Flame,
-  Grid,
   Heart,
-  List,
   ListMusic,
   LoaderCircle,
   Maximize2,
@@ -42,6 +39,8 @@ type Song = {
   album?: string;
   duration?: number;
   coverArt?: string;
+  created?: string;
+  sortName?: string;
 };
 
 type AlbumItem = {
@@ -75,11 +74,40 @@ type AlbumSort =
   | "byYear"
   | "byGenre";
 
-type SortDirection = "ascending" | "descending";
+type TrackSort = "all" | "title" | "recent" | "starred" | "random";
 
-type Genre = { value: string; songCount?: number };
+type ArtistSort = "az" | "za" | "albums";
 
-type TrackFilter = "all" | "starred" | "random" | "genre";
+type SearchResults = {
+  artists: Artist[];
+  albums: AlbumItem[];
+  songs: Song[];
+};
+
+// Filter/sort options shared by the library views
+const ALBUM_FILTERS: { label: string; sort: AlbumSort }[] = [
+  { label: "Title", sort: "alphabeticalByName" },
+  { label: "Artist", sort: "alphabeticalByArtist" },
+  { label: "Recently Added", sort: "newest" },
+  { label: "Recently Played", sort: "recent" },
+  { label: "Most Played", sort: "frequent" },
+  { label: "Starred", sort: "starred" },
+  { label: "Random", sort: "random" },
+];
+
+const ARTIST_FILTERS: { label: string; sort: ArtistSort }[] = [
+  { label: "Title A–Z", sort: "az" },
+  { label: "Title Z–A", sort: "za" },
+  { label: "Most Albums", sort: "albums" },
+];
+
+const TRACK_FILTERS: { label: string; sort: TrackSort }[] = [
+  { label: "All", sort: "all" },
+  { label: "Title", sort: "title" },
+  { label: "Recently Added", sort: "recent" },
+  { label: "Starred", sort: "starred" },
+  { label: "Random", sort: "random" },
+];
 
 async function api<T>(method: string, params: Record<string, string> = {}) {
   const response = await fetch(
@@ -139,6 +167,19 @@ function formatTotalDuration(seconds = 0) {
   return `${hours} hr ${remainingMins} min`;
 }
 
+// Client-side ordering for the loaded track page
+function sortSongs(list: Song[], sort: TrackSort) {
+  if (sort === "title") {
+    return [...list].sort((a, b) =>
+      (a.sortName || a.title).localeCompare(b.sortName || b.title),
+    );
+  }
+  if (sort === "recent") {
+    return [...list].sort((a, b) => (b.created || "").localeCompare(a.created || ""));
+  }
+  return list;
+}
+
 // Artwork with a loading spinner until the image resolves, and a graceful fallback on error
 function CoverImage({
   src,
@@ -151,12 +192,23 @@ function CoverImage({
   fallback: ReactNode;
   spinnerSize?: number;
 }) {
+  const imgRef = useRef<HTMLImageElement>(null);
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(
     src ? "loading" : "error",
   );
 
   useEffect(() => {
     setStatus(src ? "loading" : "error");
+  }, [src]);
+
+  // Cached images can finish before React binds onLoad, leaving the spinner
+  // stuck; sync from the element's own state once it mounts.
+  useEffect(() => {
+    const img = imgRef.current;
+    if (!img) return;
+    if (img.complete) {
+      setStatus(img.naturalWidth > 0 ? "loaded" : "error");
+    }
   }, [src]);
 
   if (!src || status === "error") return <>{fallback}</>;
@@ -169,6 +221,7 @@ function CoverImage({
         </span>
       )}
       <img
+        ref={imgRef}
         src={src}
         alt={alt}
         loading="lazy"
@@ -190,12 +243,9 @@ export default function Home() {
   const [artistPage, setArtistPage] = useState(1);
   const [albumPage, setAlbumPage] = useState(0);
   const [albumSort, setAlbumSort] = useState<AlbumSort>("alphabeticalByName");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("ascending");
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [artistSort, setArtistSort] = useState<ArtistSort>("az");
   const [trackOffset, setTrackOffset] = useState(0);
-  const [trackFilter, setTrackFilter] = useState<TrackFilter>("all");
-  const [trackGenre, setTrackGenre] = useState("");
-  const [genres, setGenres] = useState<Genre[]>([]);
+  const [trackSort, setTrackSort] = useState<TrackSort>("all");
   const [hasMoreAlbums, setHasMoreAlbums] = useState(false);
   const [hasMoreTracks, setHasMoreTracks] = useState(false);
   const [loading, setLoading] = useState<
@@ -221,6 +271,9 @@ export default function Home() {
 
   // UI Panels
   const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
+  const [searching, setSearching] = useState(false);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -293,57 +346,25 @@ export default function Home() {
     }
   }
 
-  // Load genres for the Tracks filter dropdown
-  async function loadGenres() {
-    try {
-      const data = await api<{ genres?: { genre?: Genre[] } }>("getGenres");
-      const list = (data.genres?.genre || [])
-        .filter((g) => (g.songCount || 0) > 0)
-        .sort((a, b) => a.value.localeCompare(b.value));
-      setGenres(list);
-    } catch {
-      /* Genre filtering is optional; ignore if the server omits it. */
-    }
-  }
-
-  // Load Tracks. A typed search always wins; otherwise the active filter decides the source.
-  async function loadTracks(
-    append = false,
-    filter = trackFilter,
-    genre = trackGenre,
-  ) {
+  // Load Tracks for the chosen sort. Starred/Random come from dedicated endpoints;
+  // "all"/"title"/"recent" page through the whole library and sort client-side.
+  async function loadTracks(append = false, sort = trackSort) {
     try {
       setLoading("tracks");
       const offset = append ? trackOffset : 0;
-      const term = search.trim();
       let nextSongs: Song[] = [];
       let paginated = true;
 
-      if (term) {
-        const data = await api<{ searchResult3?: { song?: Song[] } }>("search3", {
-          query: term,
-          songCount: "60",
-          songOffset: String(offset),
-          albumCount: "0",
-          artistCount: "0",
-        });
-        nextSongs = data.searchResult3?.song || [];
-      } else if (filter === "starred") {
+      if (sort === "starred") {
         const data = await api<{ starred2?: { song?: Song[] } }>("getStarred2");
         nextSongs = data.starred2?.song || [];
         paginated = false; // getStarred2 returns the whole set at once
-      } else if (filter === "random") {
+      } else if (sort === "random") {
         const data = await api<{ randomSongs?: { song?: Song[] } }>(
           "getRandomSongs",
           { size: "60" },
         );
         nextSongs = data.randomSongs?.song || [];
-      } else if (filter === "genre" && genre) {
-        const data = await api<{ songsByGenre?: { song?: Song[] } }>(
-          "getSongsByGenre",
-          { genre, count: "60", offset: String(offset) },
-        );
-        nextSongs = data.songsByGenre?.song || [];
       } else {
         const data = await api<{ searchResult3?: { song?: Song[] } }>("search3", {
           // Navidrome returns all songs for "*"; a bare letter matches nothing
@@ -356,7 +377,8 @@ export default function Home() {
         nextSongs = data.searchResult3?.song || [];
       }
 
-      setSongs(append ? [...songs, ...nextSongs] : nextSongs);
+      const merged = append ? [...songs, ...nextSongs] : nextSongs;
+      setSongs(sortSongs(merged, sort));
       setTrackOffset(offset + nextSongs.length);
       setHasMoreTracks(paginated && nextSongs.length === 60);
     } catch (caught) {
@@ -368,12 +390,10 @@ export default function Home() {
     }
   }
 
-  // Apply a track filter chip / genre selection, clearing any active search term
-  function applyTrackFilter(filter: TrackFilter, genre = "") {
-    setSearch("");
-    setTrackFilter(filter);
-    setTrackGenre(genre);
-    void loadTracks(false, filter, genre);
+  // Apply a track sort chip
+  function applyTrackSort(sort: TrackSort) {
+    setTrackSort(sort);
+    void loadTracks(false, sort);
   }
 
   // Open Album Detail
@@ -600,43 +620,76 @@ export default function Home() {
     });
   }
 
-  // Filtered Albums
-  const filteredAlbums = useMemo(
-    () =>
-      albums.filter((album) =>
-        `${album.name} ${album.artist || ""}`
-          .toLowerCase()
-          .includes(search.toLowerCase()),
-      ),
-    [albums, search],
-  );
+  // Albums come back already sorted by the chosen server-side filter
+  const displayedAlbums = albums;
 
-  const displayedAlbums = useMemo(
-    () =>
-      sortDirection === "descending"
-        ? [...filteredAlbums].reverse()
-        : filteredAlbums,
-    [filteredAlbums, sortDirection],
-  );
+  // Artist ordering is applied client-side over the full indexed list
+  const sortedArtists = useMemo(() => {
+    const list = [...artists];
+    if (artistSort === "za") {
+      list.sort((a, b) => b.name.localeCompare(a.name));
+    } else if (artistSort === "albums") {
+      list.sort((a, b) => (b.albumCount || 0) - (a.albumCount || 0));
+    } else {
+      list.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return list;
+  }, [artists, artistSort]);
 
-  const visibleArtists = artists.slice(0, artistPage * 50);
-  const hasMoreArtists = visibleArtists.length < artists.length;
+  const visibleArtists = sortedArtists.slice(0, artistPage * 50);
+  const hasMoreArtists = visibleArtists.length < sortedArtists.length;
 
   function changeView(
     nextView: "albums" | "artists" | "artistDetail" | "albumDetail" | "tracks" | "starred",
   ) {
     setView(nextView);
     if (nextView === "artists" && !artists.length) void loadArtists();
-    if (nextView === "tracks") {
-      if (!songs.length) void loadTracks();
-      if (!genres.length) void loadGenres();
-    }
+    if (nextView === "tracks" && !songs.length) void loadTracks();
   }
 
   // Initial Load
   useEffect(() => {
     void loadAlbums();
   }, []);
+
+  // Global search: debounced lookup across artists, albums and songs, shown in an overlay
+  useEffect(() => {
+    const term = search.trim();
+    if (term.length < 2) {
+      setSearchResults(null);
+      setSearchOpen(false);
+      setSearching(false);
+      return;
+    }
+    setSearchOpen(true);
+    setSearching(true);
+    const handle = window.setTimeout(() => {
+      void api<{
+        searchResult3?: { artist?: Artist[]; album?: AlbumItem[]; song?: Song[] };
+      }>("search3", {
+        query: term,
+        artistCount: "8",
+        albumCount: "12",
+        songCount: "24",
+      })
+        .then((data) => {
+          setSearchResults({
+            artists: data.searchResult3?.artist || [],
+            albums: data.searchResult3?.album || [],
+            songs: data.searchResult3?.song || [],
+          });
+        })
+        .catch(() => setSearchResults({ artists: [], albums: [], songs: [] }))
+        .finally(() => setSearching(false));
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [search]);
+
+  function closeSearch() {
+    setSearch("");
+    setSearchOpen(false);
+    setSearchResults(null);
+  }
 
   // Settings Init
   useEffect(() => {
@@ -687,17 +740,18 @@ export default function Home() {
             id="global-search-input"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
+            onFocus={() => {
+              if (searchResults) setSearchOpen(true);
+            }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && view === "tracks") {
-                void loadTracks();
-              }
+              if (event.key === "Escape") closeSearch();
             }}
             placeholder="Search albums, artists, or songs..."
           />
           {search && (
             <button
               className={styles.clearSearchBtn}
-              onClick={() => setSearch("")}
+              onClick={closeSearch}
               aria-label="Clear search query"
             >
               <X size={14} />
@@ -862,126 +916,27 @@ export default function Home() {
                   <h1>Albums</h1>
                 </div>
                 <span className={styles.countBadge}>
-                  {filteredAlbums.length} albums loaded
+                  {albums.length} albums
                 </span>
               </div>
 
-              {/* TOOLBAR & FILTERS */}
+              {/* FILTERS */}
               <div className={styles.toolbar}>
                 <div className={styles.filterChips}>
-                  <button
-                    className={`${styles.filterChip} ${
-                      albumSort === "alphabeticalByName" ? styles.activeChip : ""
-                    }`}
-                    onClick={() => {
-                      setAlbumSort("alphabeticalByName");
-                      void loadAlbums(0, "alphabeticalByName");
-                    }}
-                  >
-                    All
-                  </button>
-                  <button
-                    className={`${styles.filterChip} ${
-                      albumSort === "newest" ? styles.activeChip : ""
-                    }`}
-                    onClick={() => {
-                      setAlbumSort("newest");
-                      void loadAlbums(0, "newest");
-                    }}
-                  >
-                    Recently Added
-                  </button>
-                  <button
-                    className={`${styles.filterChip} ${
-                      albumSort === "frequent" ? styles.activeChip : ""
-                    }`}
-                    onClick={() => {
-                      setAlbumSort("frequent");
-                      void loadAlbums(0, "frequent");
-                    }}
-                  >
-                    Most Played
-                  </button>
-                  <button
-                    className={`${styles.filterChip} ${
-                      albumSort === "starred" ? styles.activeChip : ""
-                    }`}
-                    onClick={() => {
-                      setAlbumSort("starred");
-                      void loadAlbums(0, "starred");
-                    }}
-                  >
-                    Starred
-                  </button>
-                  <button
-                    className={`${styles.filterChip} ${
-                      albumSort === "random" ? styles.activeChip : ""
-                    }`}
-                    onClick={() => {
-                      setAlbumSort("random");
-                      void loadAlbums(0, "random");
-                    }}
-                  >
-                    Random
-                  </button>
-                </div>
-
-                <div className={styles.toolbarActions}>
-                  {/* Sort Direction Toggle */}
-                  <select
-                    className={styles.selectDropdown}
-                    value={sortDirection}
-                    onChange={(event) =>
-                      setSortDirection(event.target.value as SortDirection)
-                    }
-                    aria-label="Sort order direction"
-                  >
-                    <option value="ascending">A → Z</option>
-                    <option value="descending">Z → A</option>
-                  </select>
-
-                  {/* Album Sort Field */}
-                  <select
-                    className={styles.selectDropdown}
-                    value={albumSort}
-                    onChange={(event) => {
-                      const sort = event.target.value as AlbumSort;
-                      setAlbumSort(sort);
-                      void loadAlbums(0, sort);
-                    }}
-                    aria-label="Sort albums criteria"
-                  >
-                    <option value="alphabeticalByName">By Name</option>
-                    <option value="alphabeticalByArtist">By Artist</option>
-                    <option value="recent">Recently Played</option>
-                    <option value="frequent">Most Played</option>
-                    <option value="newest">Recently Added</option>
-                    <option value="byYear">By Year</option>
-                    <option value="byGenre">By Genre</option>
-                    <option value="random">Random Mix</option>
-                  </select>
-
-                  {/* Grid / List Mode */}
-                  <div className={styles.viewModeToggle}>
+                  {ALBUM_FILTERS.map((filter) => (
                     <button
-                      className={`${styles.viewModeBtn} ${
-                        viewMode === "grid" ? styles.activeViewMode : ""
+                      key={filter.sort}
+                      className={`${styles.filterChip} ${
+                        albumSort === filter.sort ? styles.activeChip : ""
                       }`}
-                      onClick={() => setViewMode("grid")}
-                      aria-label="Grid layout"
+                      onClick={() => {
+                        setAlbumSort(filter.sort);
+                        void loadAlbums(0, filter.sort);
+                      }}
                     >
-                      <Grid size={15} />
+                      {filter.label}
                     </button>
-                    <button
-                      className={`${styles.viewModeBtn} ${
-                        viewMode === "list" ? styles.activeViewMode : ""
-                      }`}
-                      onClick={() => setViewMode("list")}
-                      aria-label="List layout"
-                    >
-                      <List size={15} />
-                    </button>
-                  </div>
+                  ))}
                 </div>
               </div>
 
@@ -1084,6 +1039,26 @@ export default function Home() {
                 <span className={styles.countBadge}>
                   {artists.length} artists
                 </span>
+              </div>
+
+              {/* FILTERS */}
+              <div className={styles.toolbar}>
+                <div className={styles.filterChips}>
+                  {ARTIST_FILTERS.map((filter) => (
+                    <button
+                      key={filter.sort}
+                      className={`${styles.filterChip} ${
+                        artistSort === filter.sort ? styles.activeChip : ""
+                      }`}
+                      onClick={() => {
+                        setArtistSort(filter.sort);
+                        setArtistPage(1);
+                      }}
+                    >
+                      {filter.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {loading === "artists" && !artists.length ? (
@@ -1448,57 +1423,21 @@ export default function Home() {
                 <span className={styles.countBadge}>{songs.length} tracks</span>
               </div>
 
-              {/* TRACK FILTERS */}
+              {/* FILTERS */}
               <div className={styles.toolbar}>
                 <div className={styles.filterChips}>
-                  <button
-                    className={`${styles.filterChip} ${
-                      !search && trackFilter === "all" ? styles.activeChip : ""
-                    }`}
-                    onClick={() => applyTrackFilter("all")}
-                  >
-                    All
-                  </button>
-                  <button
-                    className={`${styles.filterChip} ${
-                      !search && trackFilter === "starred" ? styles.activeChip : ""
-                    }`}
-                    onClick={() => applyTrackFilter("starred")}
-                  >
-                    Starred
-                  </button>
-                  <button
-                    className={`${styles.filterChip} ${
-                      !search && trackFilter === "random" ? styles.activeChip : ""
-                    }`}
-                    onClick={() => applyTrackFilter("random")}
-                  >
-                    Random
-                  </button>
-                </div>
-
-                {genres.length > 0 && (
-                  <div className={styles.toolbarActions}>
-                    <select
-                      className={styles.selectDropdown}
-                      value={!search && trackFilter === "genre" ? trackGenre : ""}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        if (value) applyTrackFilter("genre", value);
-                        else applyTrackFilter("all");
-                      }}
-                      aria-label="Filter tracks by genre"
+                  {TRACK_FILTERS.map((filter) => (
+                    <button
+                      key={filter.sort}
+                      className={`${styles.filterChip} ${
+                        trackSort === filter.sort ? styles.activeChip : ""
+                      }`}
+                      onClick={() => applyTrackSort(filter.sort)}
                     >
-                      <option value="">All genres</option>
-                      {genres.map((genre) => (
-                        <option key={genre.value} value={genre.value}>
-                          {genre.value}
-                          {genre.songCount ? ` (${genre.songCount})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                      {filter.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {loading === "tracks" && !songs.length ? (
@@ -1619,6 +1558,153 @@ export default function Home() {
           )}
         </section>
       </section>
+
+      {/* GLOBAL SEARCH OVERLAY */}
+      {searchOpen && (
+        <div className={styles.searchOverlay}>
+          <div className={styles.searchBackdrop} onClick={closeSearch} />
+          <div className={styles.searchPanel}>
+            <div className={styles.searchPanelHeader}>
+              <span>
+                Results for <strong>{search.trim()}</strong>
+              </span>
+              <button
+                className={styles.toastCloseBtn}
+                onClick={closeSearch}
+                aria-label="Close search"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className={styles.searchPanelBody}>
+              {searching && !searchResults ? (
+                <div className={styles.searchStatus}>
+                  <LoaderCircle
+                    size={22}
+                    style={{ animation: "remoteplay-spin 1s linear infinite" }}
+                  />
+                  <span>Searching…</span>
+                </div>
+              ) : searchResults &&
+                !searchResults.artists.length &&
+                !searchResults.albums.length &&
+                !searchResults.songs.length ? (
+                <div className={styles.searchStatus}>
+                  <Search size={22} />
+                  <span>No matches found.</span>
+                </div>
+              ) : (
+                searchResults && (
+                  <>
+                    {searchResults.artists.length > 0 && (
+                      <div className={styles.searchSection}>
+                        <p className={styles.searchSectionTitle}>Artists</p>
+                        <div className={styles.searchArtistRow}>
+                          {searchResults.artists.map((artist) => (
+                            <button
+                              key={artist.id}
+                              className={styles.searchArtistCard}
+                              onClick={() => {
+                                closeSearch();
+                                void openArtist(artist);
+                              }}
+                            >
+                              <div className={styles.searchArtistAvatar}>
+                                <CoverImage
+                                  src={
+                                    artist.artistImageUrl ||
+                                    coverArtUrl(artist.coverArt, "160")
+                                  }
+                                  alt={artist.name}
+                                  spinnerSize={16}
+                                  fallback={
+                                    <>{artist.name.slice(0, 1).toUpperCase()}</>
+                                  }
+                                />
+                              </div>
+                              <span>{artist.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {searchResults.albums.length > 0 && (
+                      <div className={styles.searchSection}>
+                        <p className={styles.searchSectionTitle}>Albums</p>
+                        <div className={styles.searchResultList}>
+                          {searchResults.albums.map((album) => (
+                            <button
+                              key={album.id}
+                              className={styles.searchResultItem}
+                              onClick={() => {
+                                closeSearch();
+                                void openAlbum(album);
+                              }}
+                            >
+                              <div className={styles.searchResultThumb}>
+                                <CoverImage
+                                  src={coverArtUrl(album.coverArt, "120")}
+                                  alt={album.name}
+                                  spinnerSize={14}
+                                  fallback={<Disc3 size={18} />}
+                                />
+                              </div>
+                              <div className={styles.searchResultMeta}>
+                                <strong>{album.name}</strong>
+                                <small>{album.artist || "Unknown Artist"}</small>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {searchResults.songs.length > 0 && (
+                      <div className={styles.searchSection}>
+                        <p className={styles.searchSectionTitle}>Songs</p>
+                        <div className={styles.searchResultList}>
+                          {searchResults.songs.map((song) => (
+                            <button
+                              key={song.id}
+                              className={styles.searchResultItem}
+                              onClick={() => {
+                                const list = searchResults.songs;
+                                closeSearch();
+                                void playSong(song, list);
+                              }}
+                            >
+                              <div className={styles.searchResultThumb}>
+                                <CoverImage
+                                  src={coverArtUrl(song.coverArt, "120")}
+                                  alt=""
+                                  spinnerSize={14}
+                                  fallback={<Music size={18} />}
+                                />
+                              </div>
+                              <div className={styles.searchResultMeta}>
+                                <strong>{song.title}</strong>
+                                <small>
+                                  {song.artist || "Unknown Artist"}
+                                  {song.album ? ` · ${song.album}` : ""}
+                                </small>
+                              </div>
+                              <span className={styles.searchResultDuration}>
+                                {formatTime(song.duration)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* NOW PLAYING FLOATING DOCK */}
       <footer className={styles.player}>

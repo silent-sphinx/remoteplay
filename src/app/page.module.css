@@ -1,13 +1,14 @@
 /* RemotePlay - clean, minimal dark interface */
 
 .shell {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   color: var(--ink);
   background: var(--bg-base);
   display: flex;
   flex-direction: column;
   position: relative;
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 /* Header */
@@ -175,14 +176,15 @@
   border-color: var(--line-strong);
 }
 
-/* Main content */
+/* Main content: fills the shell between header and player; children scroll */
 .content {
   width: 100%;
   max-width: 1600px;
   margin: 0 auto;
   flex: 1;
+  min-height: 0;
   display: flex;
-  padding-bottom: 104px;
+  overflow: hidden;
 }
 
 /* Sidebar */
@@ -299,8 +301,11 @@
 /* Library main */
 .library {
   min-width: 0;
+  min-height: 0;
   flex: 1;
-  padding: 32px clamp(18px, 3vw, 44px) 40px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 32px clamp(18px, 3vw, 44px) 120px;
   animation: fadeIn 0.2s ease-out;
 }
 
@@ -493,15 +498,32 @@
 /* Image loading state (spinner + fade-in) */
 .imgSpinner {
   position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   color: var(--muted-dim);
   z-index: 1;
 }
 
+/* Center the icon by absolute-centering the svg itself. The span's own
+   display is forced to block by container rules such as `.albumCard span`,
+   so flex/grid centering on the span cannot be relied on. margin:auto keeps
+   transform free for the spin animation. */
 .imgSpinner svg {
-  animation: remoteplay-spin 0.9s linear infinite;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  margin: auto;
+  animation: imgSpin 0.9s linear infinite;
+}
+
+/* Local keyframe so CSS Modules scopes the name to match the reference above */
+@keyframes imgSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .imgLoading {
@@ -1492,6 +1514,209 @@
   background: #ffffff;
 }
 
+/* Global search overlay */
+.searchOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 76px 16px 16px;
+}
+
+.searchBackdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.searchPanel {
+  position: relative;
+  z-index: 1;
+  width: min(720px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow-elevated);
+  overflow: hidden;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.searchPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.searchPanelHeader strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.searchPanelBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.searchStatus {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 56px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.searchSection {
+  padding: 8px 4px 14px;
+}
+
+.searchSectionTitle {
+  margin: 0 0 8px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+
+.searchArtistRow {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding: 2px 4px 6px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.searchArtistCard {
+  flex-shrink: 0;
+  width: 84px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  color: var(--ink);
+  text-align: center;
+}
+
+.searchArtistAvatar {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.searchArtistAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.searchArtistCard span {
+  font-size: 12px;
+  line-height: 1.3;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchResultList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.searchResultItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: transparent;
+  text-align: left;
+  color: var(--ink);
+  transition: background-color 0.12s ease;
+}
+
+.searchResultItem:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.searchResultThumb {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--bg-surface-elevated);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted-dim);
+}
+
+.searchResultThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.searchResultMeta {
+  min-width: 0;
+  flex: 1;
+}
+
+.searchResultMeta strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchResultMeta small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchResultDuration {
+  font-size: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
 /* Responsive */
 @media (max-width: 1024px) {
   .sidebar {
@@ -1503,63 +1728,163 @@
   }
 }
 
-@media (max-width: 768px) {
+/* Tablet / mobile: header stays, sidebar becomes a horizontal nav, player compacts */
+@media (max-width: 860px) {
   .header {
-    height: 58px;
-    padding: 0 14px;
-    gap: 12px;
+    height: 56px;
+    padding: 0 12px;
+    padding-top: env(safe-area-inset-top);
+    height: calc(56px + env(safe-area-inset-top));
+    gap: 10px;
   }
-  .connection {
+  .brandSubtitle {
     display: none;
   }
-  .hostAudioPill span {
+  .connection,
+  .hostAudioPill {
     display: none;
   }
   .search {
-    max-width: 220px;
+    max-width: none;
+    height: 36px;
   }
+  /* Content stacks: a fixed top nav strip, then the scrolling library */
   .content {
     flex-direction: column;
-    padding-bottom: 130px;
   }
+
+  /* Sidebar becomes a horizontal nav strip pinned above the scroll area */
   .sidebar {
     width: 100%;
+    flex-shrink: 0;
     border-right: 0;
     border-bottom: 1px solid var(--line);
-    padding: 10px 14px;
+    padding: 8px 12px;
     flex-direction: row;
     align-items: center;
-    gap: 14px;
+    gap: 8px;
     overflow-x: auto;
+    overflow-y: hidden;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .sidebar::-webkit-scrollbar {
+    display: none;
   }
   .sidebarSection {
     flex-direction: row;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
   }
   .sidebar nav {
     flex-direction: row;
+    gap: 6px;
+  }
+  .navButton {
+    width: auto;
+    white-space: nowrap;
+    padding: 9px 13px;
   }
   .sidebar .eyebrow,
   .sidebar .deviceCard {
     display: none;
   }
+
   .library {
-    padding: 22px 14px 30px;
+    padding: 18px 14px calc(96px + env(safe-area-inset-bottom));
   }
+  .pageHeading h1 {
+    font-size: 26px;
+  }
+
+  /* Player: flex layout with info + compact transport */
   .player {
-    height: 72px;
-    padding: 0 14px;
-    grid-template-columns: 1fr auto;
+    height: auto;
+    min-height: 68px;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .nowPlayingInfo {
+    flex: 1;
+    gap: 10px;
+  }
+  .playerThumb {
+    width: 44px;
+    height: 44px;
+  }
+  .controls {
+    flex-direction: row;
+    gap: 0;
+    flex-shrink: 0;
   }
   .progressScrubber {
     display: none;
   }
-  .volumeControl {
+  .transport {
+    gap: 6px;
+  }
+  /* Keep touch targets generous; drop the less-used toggles on small screens */
+  .transportBtn {
+    padding: 10px;
+  }
+  /* Keep the queue reachable; drop volume/equalizer/kiosk (kiosk lives in the header) */
+  .playerUtilities {
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .volumeControl,
+  .playerUtilities > .equalizerWave,
+  .playerUtilities > .iconButton {
     display: none;
   }
+
   .kioskBody {
     flex-direction: column;
     text-align: center;
   }
+
+  /* Overlays fill the screen like native sheets */
+  .searchOverlay {
+    padding: calc(56px + env(safe-area-inset-top)) 0 0;
+  }
+  .searchPanel {
+    width: 100%;
+    max-height: none;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+  .queueDrawer {
+    width: 100%;
+    bottom: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .settingsCard {
+    width: 100%;
+    border-radius: 14px 14px 0 0;
+    align-self: flex-end;
+  }
+  .modalBackdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
 }
+
+@media (max-width: 480px) {
+  .albumGrid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px 12px;
+  }
+  .artistGrid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+  }
+  /* Hide shuffle/repeat on the narrowest screens to protect tap targets */
+  .transport > .transportBtn:first-child,
+  .transport > .transportBtn:last-child {
+    display: none;
+  }
+}
+

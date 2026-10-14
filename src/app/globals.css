@@ -52,6 +52,12 @@ html, body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+  /* App-like touch behavior */
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+  touch-action: manipulation;
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
 }
 
 button, input, select {
@@ -64,6 +70,13 @@ button {
   background: transparent;
   cursor: pointer;
   user-select: none;
+}
+
+/* On phones, inputs at >=16px so iOS Safari never zooms on focus */
+@media (max-width: 860px) {
+  input, select, textarea {
+    font-size: 16px;
+  }
 }
 
 /* Minimal scrollbar */
@@ -109,4 +122,14 @@ button {
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* Respect users who prefer less motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
