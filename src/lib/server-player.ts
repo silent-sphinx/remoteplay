@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { execFileSync } from "node:child_process";
+import net from "node:net";
+import { rmSync } from "node:fs";
 import { subsonicUrl } from "@/lib/subsonic";
 import { getSettings } from "@/lib/settings";
 
@@ -27,6 +29,7 @@ type PlayerRuntime = {
   state: PlayerState;
   processRef: ChildProcess | null;
   activeChildId: number;
+  mpvIpcPath: string | null;
 };
 
 const globalRuntime = globalThis as typeof globalThis & {
@@ -47,6 +50,7 @@ const runtime = (globalRuntime.__remoteplayPlayer ??= {
   },
   processRef: null,
   activeChildId: 0,
+  mpvIpcPath: null,
 });
 const state = runtime.state;
 
@@ -92,6 +96,19 @@ function stopProcess() {
       }
     }
   }
+  if (runtime.mpvIpcPath) {
+    rmSync(runtime.mpvIpcPath, { force: true });
+    runtime.mpvIpcPath = null;
+  }
+}
+
+function sendMpvCommand(command: Record<string, unknown>) {
+  if (!runtime.mpvIpcPath) return;
+  const socket = net.createConnection(runtime.mpvIpcPath);
+  socket.once("error", () => socket.destroy());
+  socket.once("connect", () => {
+    socket.end(`${JSON.stringify(command)}\n`);
+  });
 }
 
 export function getPlayerState() {
@@ -145,10 +162,14 @@ export function play(song: ServerSong, startOffset = 0) {
   const spawnEnv: NodeJS.ProcessEnv = { ...process.env };
 
   if (backend === "mpv") {
+    const mpvIpcPath = `/tmp/remoteplay-mpv-${process.pid}.sock`;
+    rmSync(mpvIpcPath, { force: true });
+    runtime.mpvIpcPath = mpvIpcPath;
     args = [
       "--no-video",
       "--really-quiet",
       "--force-window=no",
+      `--input-ipc-server=${mpvIpcPath}`,
       `--volume=${volInt}`,
       "--network-timeout=15",
       ...(startOffset > 0 ? [`--start=${startOffset}`] : []),
@@ -297,6 +318,9 @@ export function stop() {
 
 export function setVolume(volume: number) {
   state.volume = Math.max(0, Math.min(1, volume));
+  if (getBackend() === "mpv" && runtime.processRef) {
+    sendMpvCommand({ command: ["set", "volume", Math.round(state.volume * 100)] });
+  }
 }
 
 export function clearError() {
