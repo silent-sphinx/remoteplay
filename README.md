@@ -29,7 +29,7 @@ Install Node.js, npm, and the server-side audio player:
 
 ```bash
 sudo apt update
-sudo apt install -y git mpv nodejs npm
+sudo apt install -y acl git mpv nodejs npm
 ```
 
 Next.js 16 requires Node.js 20 or newer. Install the project under `/opt/remoteplay`, then configure and build it:
@@ -64,8 +64,11 @@ Use a system service for a headless Raspberry Pi or other machine using a direct
 ```bash
 sudo useradd --system --home /opt/remoteplay --shell /usr/sbin/nologin remoteplay
 sudo usermod -aG audio remoteplay
-sudo chown -R remoteplay:remoteplay /opt/remoteplay
+sudo chown -R "$USER":"$USER" /opt/remoteplay
+sudo chmod 755 /opt/remoteplay
 sudo chmod 600 /opt/remoteplay/.env.local
+sudo setfacl -R -m u:remoteplay:rX /opt/remoteplay
+sudo setfacl -m u:remoteplay:r /opt/remoteplay/.env.local
 ```
 
 Create `/etc/systemd/system/remoteplay.service`:
@@ -114,6 +117,16 @@ git pull
 npm ci
 npm run build
 sudo systemctl restart remoteplay
+```
+
+Keep the project owned by the user who performs updates. The service user only needs read and execute access to the project. If the installation was previously changed to `remoteplay` ownership, restore it before updating:
+
+```bash
+sudo apt update
+sudo apt install -y acl
+sudo chown -R pi:pi /opt/remoteplay
+sudo setfacl -R -m u:remoteplay:rX /opt/remoteplay
+sudo setfacl -m u:remoteplay:r /opt/remoteplay/.env.local
 ```
 
 ### Option 2: User service with PulseAudio or PipeWire

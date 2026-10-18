@@ -142,7 +142,7 @@ export function getBackend(): PlayerBackend | null {
 export function getAudioControlCapabilities() {
   const backend = getBackend();
   return {
-    volume: backend === "mpv",
+    volume: backend === "mpv" || backend === "ffplay",
     outputSelection: backend === "mpv" || (process.platform === "linux" && backend === "ffplay"),
   };
 }
@@ -221,7 +221,7 @@ export function play(song: ServerSong, startOffset = 0) {
   }
 
   const child = spawn(backend, args, {
-    stdio: ["ignore", "ignore", "pipe"],
+    stdio: [backend === "ffplay" ? "pipe" : "ignore", "ignore", "pipe"],
     env: spawnEnv,
   });
 
@@ -329,10 +329,19 @@ export function stop() {
 }
 
 export function setVolume(volume: number) {
-  state.volume = Math.max(0, Math.min(1, volume));
   const backend = getBackend();
+  const ffplayStdin = backend === "ffplay" ? runtime.processRef?.stdin : null;
+  const previousVolume = state.volume;
+  const requestedVolume = Math.max(0, Math.min(1, volume));
+  state.volume = ffplayStdin
+    ? Math.round(requestedVolume / 0.05) * 0.05
+    : requestedVolume;
   if (backend === "mpv" && runtime.processRef) {
     sendMpvCommand({ command: ["set", "volume", Math.round(state.volume * 100)] });
+  } else if (ffplayStdin) {
+    const stepCount = Math.round(Math.abs(state.volume - previousVolume) / 0.05);
+    const command = state.volume >= previousVolume ? "0" : "9";
+    ffplayStdin.write(command.repeat(stepCount));
   } else if (backend && runtime.processRef && state.current) {
     // Fallback players only read volume at startup, so preserve the position
     // while recreating the process with the new volume.
