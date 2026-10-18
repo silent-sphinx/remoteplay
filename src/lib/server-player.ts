@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import net from "node:net";
 import { rmSync } from "node:fs";
 import { subsonicUrl } from "@/lib/subsonic";
-import { getSettings } from "@/lib/settings";
+import { getSettings, isValidAudioOutput } from "@/lib/settings";
 
 export type ServerSong = {
   id: string;
@@ -139,6 +139,14 @@ export function getBackend(): PlayerBackend | null {
   }
 }
 
+export function getAudioControlCapabilities() {
+  const backend = getBackend();
+  return {
+    volume: backend === "mpv",
+    outputSelection: backend === "mpv" || (process.platform === "linux" && backend === "ffplay"),
+  };
+}
+
 // MPEG1 Layer3 frames are 1152 samples; at the common 44.1kHz rate that is
 // ~38.28 frames/sec, used to approximate a seek target as a frame skip since
 // mpg123 has no time-based seek flag.
@@ -155,7 +163,11 @@ export function play(song: ServerSong, startOffset = 0) {
   const currentChildId = ++childCounter;
   runtime.activeChildId = currentChildId;
 
-  const output = getSettings().audioOutput;
+  const configuredOutput = getSettings().audioOutput;
+  const canSelectOutput = backend === "mpv" || (process.platform === "linux" && backend === "ffplay");
+  const output = canSelectOutput && isValidAudioOutput(configuredOutput)
+    ? configuredOutput
+    : "auto";
   const volInt = Math.max(0, Math.min(100, Math.round(state.volume * 100)));
 
   let args: string[] = [];
@@ -318,8 +330,16 @@ export function stop() {
 
 export function setVolume(volume: number) {
   state.volume = Math.max(0, Math.min(1, volume));
-  if (getBackend() === "mpv" && runtime.processRef) {
+  const backend = getBackend();
+  if (backend === "mpv" && runtime.processRef) {
     sendMpvCommand({ command: ["set", "volume", Math.round(state.volume * 100)] });
+  } else if (backend && runtime.processRef && state.current) {
+    // Fallback players only read volume at startup, so preserve the position
+    // while recreating the process with the new volume.
+    const position = elapsedPosition();
+    const wasPlaying = state.playing;
+    play(state.current, position);
+    if (!wasPlaying) pause();
   }
 }
 

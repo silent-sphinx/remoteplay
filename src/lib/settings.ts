@@ -19,13 +19,29 @@ export function saveSettings(settings: Partial<RemotePlaySettings>) {
   return next;
 }
 
+function getMpvOutputs(): AudioOutput[] {
+  const help = execFileSync("mpv", ["--no-config", "--audio-device=help"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const outputs: AudioOutput[] = [];
+  for (const line of help.split("\n")) {
+    const match = line.match(/^\s*['\"]([^'\"]+)['\"]\s+\((.+)\)\s*$/);
+    if (!match || match[1] === "auto") continue;
+    outputs.push({ id: match[1], name: match[2] });
+  }
+  return outputs;
+}
+
 export function getAudioOutputs(): AudioOutput[] {
   try {
+    if (process.platform === "darwin" || process.platform === "linux") {
+      const outputs = getMpvOutputs();
+      if (outputs.length) return outputs;
+    }
     if (process.platform === "darwin") {
-      const data = JSON.parse(execFileSync("system_profiler", ["SPAudioDataType", "-json"], { encoding: "utf8" }));
-      const outputs: AudioOutput[] = [];
-      for (const group of data.SPAudioDataType || []) for (const device of group._items || []) outputs.push({ id: device._name, name: device._name });
-      return outputs;
+      // system_profiler names are not valid ffplay/mpg123 output IDs.
+      return [];
     }
     if (process.platform === "linux") {
       return execFileSync("pactl", ["list", "short", "sinks"], { encoding: "utf8" }).trim().split("\n").filter(Boolean).map((line) => {
@@ -35,4 +51,9 @@ export function getAudioOutputs(): AudioOutput[] {
     }
   } catch { /* Fall back to the player's default output. */ }
   return [];
+}
+
+export function isValidAudioOutput(output: string) {
+  if (output === "auto") return true;
+  return getAudioOutputs().some((candidate) => candidate.id === output);
 }

@@ -458,9 +458,14 @@ export default function Home() {
   // Hardware Audio Output on Host
   const [audioOutput, setAudioOutput] = useState("auto");
   const [audioOutputs, setAudioOutputs] = useState<{ id: string; name: string }[]>([]);
-  const [hostInfo, setHostInfo] = useState<{ platform: string; backend: string | null }>({
+  const [hostInfo, setHostInfo] = useState<{
+    platform: string;
+    backend: string | null;
+    capabilities: { volume: boolean; outputSelection: boolean };
+  }>({
     platform: "",
     backend: null,
+    capabilities: { volume: false, outputSelection: false },
   });
   const [navidromeStatus, setNavidromeStatus] = useState<{ connected: boolean; version: string | null }>({
     connected: false,
@@ -1328,7 +1333,11 @@ export default function Home() {
     void settingsApi<{
       settings: { audioOutput: string };
       outputs: { id: string; name: string }[];
-      host: { platform: string; backend: string | null };
+      host: {
+        platform: string;
+        backend: string | null;
+        capabilities: { volume: boolean; outputSelection: boolean };
+      };
       navidrome: { connected: boolean; version: string | null };
     }>()
       .then((data) => {
@@ -1660,7 +1669,7 @@ export default function Home() {
             <div className={styles.deviceInfo}>
               <strong>Raspberry Pi Audio</strong>
               <small>
-                {audioOutput === "auto" ? "Default Output" : audioOutput} · mpv
+                {audioOutput === "auto" ? "Default Output" : audioOutput} · {hostInfo.backend || "No player"}
               </small>
             </div>
             <span className={styles.liveDot} />
@@ -3312,12 +3321,13 @@ export default function Home() {
             {/* Hardware Output Sink Selection */}
             <div className={styles.settingGroup}>
               <label className={styles.settingLabel} htmlFor="audio-output-select">
-                RASPBERRY PI AUDIO OUTPUT SINK
+                HOST AUDIO OUTPUT
               </label>
               <select
                 id="audio-output-select"
                 className={styles.selectDropdown}
                 value={audioOutput}
+                disabled={!hostInfo.capabilities.outputSelection}
                 onChange={(event) => {
                   const val = event.target.value;
                   setAudioOutput(val);
@@ -3332,7 +3342,11 @@ export default function Home() {
                 ))}
               </select>
               <small className={styles.settingHint}>
-                Select physical audio output on the Raspberry Pi (DAC, HDMI, or 3.5mm Headphone Jack).
+                {hostInfo.capabilities.outputSelection
+                  ? "Choose a detected output. The setting is applied to the next track."
+                  : hostInfo.backend
+                    ? `Install mpv on ${formatPlatform(hostInfo.platform)} to select outputs and change volume while playing.`
+                    : "Install mpv, ffplay, or mpg123 on the host to enable server playback."}
               </small>
             </div>
 
@@ -3344,7 +3358,7 @@ export default function Home() {
               </div>
               <div>
                 <dt>Playback device</dt>
-                <dd>{hostInfo.backend ? `${hostInfo.backend} (host speaker)` : "No backend found"}</dd>
+                <dd>{hostInfo.backend ? `${hostInfo.backend}${hostInfo.capabilities.volume ? " · live volume" : " · volume fixed per track"}` : "No backend found"}</dd>
               </div>
               <div>
                 <dt>Navidrome</dt>
