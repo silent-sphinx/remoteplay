@@ -1198,6 +1198,17 @@
   overflow: hidden;
 }
 
+.scrubBarInteractive {
+  cursor: pointer;
+  touch-action: none;
+  overflow: visible;
+}
+
+.scrubBarInteractive:hover .scrubThumb,
+.scrubBarInteractive:active .scrubThumb {
+  display: block;
+}
+
 .scrubBarFill {
   height: 100%;
   border-radius: 2px;
@@ -1208,6 +1219,15 @@
 
 .scrubThumb {
   display: none;
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translateY(-50%);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.15);
 }
 
 /* Player right utilities */

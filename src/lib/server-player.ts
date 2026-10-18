@@ -114,7 +114,20 @@ export function canPlay() {
   }
 }
 
-export function play(song: ServerSong) {
+export function getBackend(): PlayerBackend | null {
+  try {
+    return findBackend();
+  } catch {
+    return null;
+  }
+}
+
+// MPEG1 Layer3 frames are 1152 samples; at the common 44.1kHz rate that is
+// ~38.28 frames/sec, used to approximate a seek target as a frame skip since
+// mpg123 has no time-based seek flag.
+const MPG123_FRAMES_PER_SECOND = 44100 / 1152;
+
+export function play(song: ServerSong, startOffset = 0) {
   // Stream native format without lossy re-encoding; mpv & ffplay handle flac, mp3, m4a, opus natively
   const url = subsonicUrl("stream", { id: song.id });
   if (!url) throw new Error("Navidrome is not configured");
@@ -138,6 +151,7 @@ export function play(song: ServerSong) {
       "--force-window=no",
       `--volume=${volInt}`,
       "--network-timeout=15",
+      ...(startOffset > 0 ? [`--start=${startOffset}`] : []),
       ...(output !== "auto" ? [`--audio-device=${output}`] : []),
       url,
     ];
@@ -149,6 +163,7 @@ export function play(song: ServerSong) {
       "-loglevel",
       "error",
       "-vn",
+      ...(startOffset > 0 ? ["-ss", String(startOffset)] : []),
       "-reconnect",
       "1",
       "-reconnect_streamed",
@@ -164,6 +179,9 @@ export function play(song: ServerSong) {
     }
   } else {
     args = ["-q", url];
+    if (startOffset > 0) {
+      args.push("-k", String(Math.round(startOffset * MPG123_FRAMES_PER_SECOND)));
+    }
     if (output !== "auto") {
       args.unshift("-a", output);
     }
@@ -231,9 +249,18 @@ export function play(song: ServerSong) {
 
   state.current = song;
   state.playing = true;
-  state.position = 0;
-  state.pausedAt = 0;
+  state.position = startOffset;
+  state.pausedAt = startOffset;
   state.startedAt = Date.now();
+}
+
+export function seek(positionSeconds: number) {
+  if (!state.current) return;
+  const duration = state.current.duration;
+  const target = Math.max(0, duration ? Math.min(positionSeconds, duration) : positionSeconds);
+  const wasPlaying = state.playing;
+  play(state.current, target);
+  if (!wasPlaying) pause();
 }
 
 export function pause() {

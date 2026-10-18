@@ -17,6 +17,7 @@ import {
   Flame,
   GripVertical,
   Heart,
+  Library,
   ListMusic,
   ListPlus,
   LoaderCircle,
@@ -73,6 +74,16 @@ type Artist = {
   albumCount?: number;
 };
 
+type Playlist = {
+  id: string;
+  name: string;
+  comment?: string;
+  owner?: string;
+  songCount?: number;
+  duration?: number;
+  coverArt?: string;
+};
+
 type AlbumSort =
   | "alphabeticalByName"
   | "alphabeticalByArtist"
@@ -95,7 +106,9 @@ type View =
   | "artistDetail"
   | "albumDetail"
   | "tracks"
-  | "starred";
+  | "starred"
+  | "playlists"
+  | "playlistDetail";
 
 // Overlays that occupy their own browser history entry
 type Layer = "search" | "settings" | "queue" | "sheet" | "kiosk";
@@ -106,6 +119,7 @@ type NavEntry = {
   view: View;
   album?: AlbumItem;
   artist?: Artist;
+  playlist?: Playlist;
   albumBackView?: View;
   artistBackView?: View;
   albumSort?: AlbumSort;
@@ -185,6 +199,16 @@ async function settingsApi<T>(body?: Record<string, unknown>) {
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "Unable to update settings");
   return data as T;
+}
+
+const PLATFORM_LABELS: Record<string, string> = {
+  darwin: "macOS",
+  linux: "Linux",
+  win32: "Windows",
+};
+
+function formatPlatform(platform: string) {
+  return PLATFORM_LABELS[platform] || platform || "Unknown";
 }
 
 function formatTime(seconds = 0) {
@@ -370,7 +394,14 @@ export default function Home() {
   const [hasMoreAlbums, setHasMoreAlbums] = useState(false);
   const [hasMoreTracks, setHasMoreTracks] = useState(false);
   const [loading, setLoading] = useState<
-    "albums" | "artists" | "tracks" | "artistDetail" | "albumDetail" | ""
+    | "albums"
+    | "artists"
+    | "tracks"
+    | "artistDetail"
+    | "albumDetail"
+    | "playlists"
+    | "playlistDetail"
+    | ""
   >("");
 
   const [selectedArtist, setSelectedArtist] = useState<Artist | null>(null);
@@ -378,11 +409,15 @@ export default function Home() {
   const [artistSongs, setArtistSongs] = useState<Song[]>([]);
   const [selectedAlbum, setSelectedAlbum] = useState<AlbumItem | null>(null);
   const [albumSongs, setAlbumSongs] = useState<Song[]>([]);
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
+  const [playlistSongs, setPlaylistSongs] = useState<Song[]>([]);
 
   // Queue and Now Playing (Strictly Host Audio)
   const [queue, setQueue] = useState<Song[]>([]);
   const [current, setCurrent] = useState<Song | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
+  const [scrubPreview, setScrubPreview] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
@@ -423,6 +458,14 @@ export default function Home() {
   // Hardware Audio Output on Host
   const [audioOutput, setAudioOutput] = useState("auto");
   const [audioOutputs, setAudioOutputs] = useState<{ id: string; name: string }[]>([]);
+  const [hostInfo, setHostInfo] = useState<{ platform: string; backend: string | null }>({
+    platform: "",
+    backend: null,
+  });
+  const [navidromeStatus, setNavidromeStatus] = useState<{ connected: boolean; version: string | null }>({
+    connected: false,
+    version: null,
+  });
 
   // Track host state transitions for auto-advance in queue
   const wasPlayingRef = useRef(false);
@@ -534,24 +577,42 @@ export default function Home() {
   }
 
   // Load Tracks for the chosen sort. Starred/Random come from dedicated endpoints;
-  // "all"/"title"/"recent" page through the whole library and sort client-side.
+  // "recent" walks albums newest-first (Subsonic has no "newest songs" endpoint);
+  // "all"/"title" page through the whole library and sort client-side.
   async function loadTracks(append = false, sort = trackSort) {
     try {
       setLoading("tracks");
       const offset = append ? trackOffset : 0;
       let nextSongs: Song[] = [];
-      let paginated = true;
+      let nextOffset = offset;
+      let hasMore = false;
 
       if (sort === "starred") {
         const data = await api<{ starred2?: { song?: Song[] } }>("getStarred2");
         nextSongs = data.starred2?.song || [];
-        paginated = false; // getStarred2 returns the whole set at once
       } else if (sort === "random") {
         const data = await api<{ randomSongs?: { song?: Song[] } }>(
           "getRandomSongs",
           { size: "60" },
         );
         nextSongs = data.randomSongs?.song || [];
+      } else if (sort === "recent") {
+        const albumPageSize = 10;
+        const data = await api<{ albumList2?: { album?: AlbumItem[] } }>(
+          "getAlbumList2",
+          { type: "newest", size: String(albumPageSize), offset: String(offset) },
+        );
+        const newestAlbums = data.albumList2?.album || [];
+        const albumSongs = await Promise.all(
+          newestAlbums.map((album) =>
+            api<{ album?: { song?: Song[] } }>("getAlbum", { id: album.id }).then(
+              (res) => res.album?.song || [],
+            ),
+          ),
+        );
+        nextSongs = albumSongs.flat();
+        nextOffset = offset + newestAlbums.length;
+        hasMore = newestAlbums.length === albumPageSize;
       } else {
         const data = await api<{ searchResult3?: { song?: Song[] } }>("search3", {
           // Navidrome returns all songs for "*"; a bare letter matches nothing
@@ -562,12 +623,14 @@ export default function Home() {
           artistCount: "0",
         });
         nextSongs = data.searchResult3?.song || [];
+        nextOffset = offset + nextSongs.length;
+        hasMore = nextSongs.length === 60;
       }
 
       const merged = append ? [...songs, ...nextSongs] : nextSongs;
       setSongs(sortSongs(merged, sort));
-      setTrackOffset(offset + nextSongs.length);
-      setHasMoreTracks(paginated && nextSongs.length === 60);
+      setTrackOffset(nextOffset);
+      setHasMoreTracks(hasMore);
     } catch (caught) {
       setErrorNotice(
         caught instanceof Error ? caught.message : "Unable to load tracks",
@@ -602,6 +665,46 @@ export default function Home() {
     } catch (caught) {
       setErrorNotice(
         caught instanceof Error ? caught.message : "Unable to open album",
+      );
+    } finally {
+      setLoading("");
+    }
+  }
+
+  // Load Playlists
+  async function loadPlaylists() {
+    try {
+      setLoading("playlists");
+      setErrorNotice(null);
+      const data = await api<{ playlists?: { playlist?: Playlist[] } }>(
+        "getPlaylists",
+      );
+      setPlaylists(data.playlists?.playlist || []);
+    } catch (caught) {
+      setErrorNotice(
+        caught instanceof Error ? caught.message : "Unable to load playlists",
+      );
+    } finally {
+      setLoading("");
+    }
+  }
+
+  // Open Playlist Detail
+  async function openPlaylist(playlist: Playlist, push = true) {
+    try {
+      setLoading("playlistDetail");
+      setErrorNotice(null);
+      if (push) pushNav({ view: "playlistDetail", playlist });
+      setSelectedPlaylist(playlist);
+      setPlaylistSongs([]);
+      setView("playlistDetail");
+      const data = await api<{ playlist?: { entry?: Song[] } }>("getPlaylist", {
+        id: playlist.id,
+      });
+      setPlaylistSongs(data.playlist?.entry || []);
+    } catch (caught) {
+      setErrorNotice(
+        caught instanceof Error ? caught.message : "Unable to open playlist",
       );
     } finally {
       setLoading("");
@@ -704,7 +807,7 @@ export default function Home() {
       wasPlayingRef.current = player.playing;
       setCurrent(player.current);
       setPlaying(player.playing);
-      setCurrentTime(player.position);
+      if (scrubPreview === null) setCurrentTime(player.position);
 
       if (player.error && player.error !== dismissedError) {
         setErrorNotice(`Host player: ${player.error}`);
@@ -796,6 +899,46 @@ export default function Home() {
     setVolume(newVol);
     setIsMuted(false);
     void playerApi({ action: "volume", volume: newVol }).catch(() => undefined);
+  }
+
+  // Scrub to a position on the track progress bar (click or drag)
+  function scrubRatioFromEvent(event: ReactPointerEvent<HTMLDivElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0;
+    return Math.max(0, Math.min(1, ratio));
+  }
+
+  function startScrub(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!current?.duration) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setScrubPreview(scrubRatioFromEvent(event) * current.duration);
+  }
+
+  function moveScrub(event: ReactPointerEvent<HTMLDivElement>) {
+    if (scrubPreview === null || !current?.duration) return;
+    setScrubPreview(scrubRatioFromEvent(event) * current.duration);
+  }
+
+  function endScrub() {
+    if (scrubPreview === null) return;
+    const target = scrubPreview;
+    setCurrentTime(target);
+    void playerApi<{ playing: boolean; position: number }>({
+      action: "seek",
+      position: target,
+    })
+      .then((player) => {
+        setPlaying(player.playing);
+        wasPlayingRef.current = player.playing;
+        setCurrentTime(player.position);
+      })
+      .catch(() => setErrorNotice("Host player seek failed"))
+      .finally(() => setScrubPreview(null));
+  }
+
+  function cancelScrub() {
+    setScrubPreview(null);
   }
 
   // Host Mute Toggle
@@ -935,6 +1078,7 @@ export default function Home() {
     setView(nextView);
     if (nextView === "artists" && !artists.length) void loadArtists();
     if (nextView === "tracks" && !songs.length) void loadTracks();
+    if (nextView === "playlists" && !playlists.length) void loadPlaylists();
   }
 
   // Jump to an album list curated by a server-side sort
@@ -951,6 +1095,8 @@ export default function Home() {
     if (target === "artistDetail") return selectedArtist?.name || "Artist";
     if (target === "artists") return "Artists";
     if (target === "tracks") return "Tracks";
+    if (target === "playlistDetail") return selectedPlaylist?.name || "Playlist";
+    if (target === "playlists") return "Playlists";
     return "Albums";
   }
 
@@ -1123,6 +1269,12 @@ export default function Home() {
           else void openArtist(entry.artist, false);
           changed = true;
         }
+      } else if (entry.view === "playlistDetail" && entry.playlist) {
+        if (view !== "playlistDetail" || selectedPlaylist?.id !== entry.playlist.id) {
+          if (selectedPlaylist?.id === entry.playlist.id) setView("playlistDetail");
+          else void openPlaylist(entry.playlist, false);
+          changed = true;
+        }
       } else {
         const sortChanged =
           entry.view === "albums" && !!entry.albumSort && entry.albumSort !== albumSort;
@@ -1176,10 +1328,14 @@ export default function Home() {
     void settingsApi<{
       settings: { audioOutput: string };
       outputs: { id: string; name: string }[];
+      host: { platform: string; backend: string | null };
+      navidrome: { connected: boolean; version: string | null };
     }>()
       .then((data) => {
         setAudioOutput(data.settings.audioOutput);
         setAudioOutputs(data.outputs);
+        setHostInfo(data.host);
+        setNavidromeStatus(data.navidrome);
       })
       .catch(() => undefined);
   }, []);
@@ -1455,6 +1611,16 @@ export default function Home() {
                 onClick={() => openAlbumList("starred")}
               >
                 <Heart size={18} /> Starred Mix
+              </button>
+              <button
+                className={`${styles.navButton} ${
+                  view === "playlists" || view === "playlistDetail"
+                    ? styles.activeNav
+                    : ""
+                }`}
+                onClick={() => changeView("playlists")}
+              >
+                <Library size={18} /> Playlists
               </button>
             </nav>
           </div>
@@ -2192,6 +2358,227 @@ export default function Home() {
               )}
             </>
           )}
+
+          {/* PLAYLISTS VIEW */}
+          {view === "playlists" && (
+            <>
+              <div className={styles.pageHeading}>
+                <div>
+                  <p className={styles.eyebrow}>NAVIDROME</p>
+                  <h1>Playlists</h1>
+                </div>
+                <span className={styles.countBadge}>
+                  {playlists.length} playlists
+                </span>
+              </div>
+
+              {loading === "playlists" && !playlists.length ? (
+                <AlbumGridSkeleton count={8} />
+              ) : !playlists.length && !errorNotice ? (
+                <EmptyState
+                  icon={<Library size={26} />}
+                  title="No playlists yet"
+                  hint="Create a playlist in Navidrome and it will show up here."
+                />
+              ) : (
+                <div className={styles.albumGrid}>
+                  {playlists.map((playlist) => (
+                    <div
+                      key={playlist.id}
+                      className={styles.albumCard}
+                      onClick={() => void openPlaylist(playlist)}
+                    >
+                      <div className={styles.albumCoverWrapper}>
+                        <CoverImage
+                          src={coverArtUrl(playlist.coverArt, "400")}
+                          alt={playlist.name}
+                          spinnerSize={22}
+                          fallback={
+                            <div className={styles.vinylPlaceholder}>
+                              <Library size={38} />
+                            </div>
+                          }
+                        />
+                      </div>
+                      <strong>{playlist.name}</strong>
+                      <span>
+                        {playlist.songCount ?? 0} track
+                        {playlist.songCount === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* PLAYLIST DETAIL VIEW */}
+          {view === "playlistDetail" && selectedPlaylist && (
+            <div>
+              <button className={styles.backBtn} onClick={() => goBack("playlists")}>
+                <ArrowLeft size={14} /> {viewLabel("playlists")}
+              </button>
+
+              <div className={styles.detailHero}>
+                {selectedPlaylist.coverArt && (
+                  <div
+                    className={styles.heroBackdrop}
+                    style={{
+                      backgroundImage: `url(${coverArtUrl(selectedPlaylist.coverArt, "400")})`,
+                    }}
+                  />
+                )}
+                <div className={styles.heroContent}>
+                  <div className={styles.heroArtwork}>
+                    <CoverImage
+                      src={coverArtUrl(selectedPlaylist.coverArt, "500")}
+                      alt={selectedPlaylist.name}
+                      spinnerSize={28}
+                      fallback={<Library size={64} color="var(--accent)" />}
+                    />
+                  </div>
+                  <div className={styles.heroMeta}>
+                    <p className={styles.eyebrow}>PLAYLIST</p>
+                    <h2>{selectedPlaylist.name}</h2>
+                    <div className={styles.heroMetaSubtitle}>
+                      <span>{playlistSongs.length} tracks</span>
+                      {playlistSongs.length > 0 && (
+                        <span>
+                          · {formatTotalDuration(
+                            playlistSongs.reduce((sum, s) => sum + (s.duration || 0), 0),
+                          )}
+                        </span>
+                      )}
+                    </div>
+                    <div className={styles.heroActions}>
+                      <button
+                        className={styles.primaryPlayBtn}
+                        disabled={!playlistSongs.length}
+                        onClick={() => {
+                          if (playlistSongs.length > 0) {
+                            void playSong(playlistSongs[0], playlistSongs);
+                          }
+                        }}
+                      >
+                        <Play size={17} fill="currentColor" /> Play on Host Speaker
+                      </button>
+                      <button
+                        className={styles.secondaryActionBtn}
+                        disabled={!playlistSongs.length}
+                        onClick={() => {
+                          if (playlistSongs.length > 0) {
+                            const shuffled = [...playlistSongs].sort(
+                              () => Math.random() - 0.5,
+                            );
+                            void playSong(shuffled[0], shuffled);
+                          }
+                        }}
+                      >
+                        <Shuffle size={15} /> Shuffle
+                      </button>
+                      <button
+                        className={styles.secondaryActionBtn}
+                        disabled={!playlistSongs.length}
+                        onClick={() => addToQueue(playlistSongs)}
+                      >
+                        <ListMusic size={15} /> Add to Queue
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {loading === "playlistDetail" && !playlistSongs.length ? (
+                <TrackListSkeleton />
+              ) : !playlistSongs.length && !errorNotice ? (
+                <EmptyState
+                  icon={<Library size={26} />}
+                  title="This playlist is empty"
+                  hint="Add tracks to it in Navidrome."
+                />
+              ) : (
+                <div className={styles.trackTable}>
+                  <div className={styles.trackTableHeader}>
+                    <span>#</span>
+                    <span>Title & Artist</span>
+                    <span style={{ textAlign: "right" }}>Duration</span>
+                    <span />
+                  </div>
+                  {playlistSongs.map((song, index) => {
+                    const isCurrentSong = current?.id === song.id;
+                    return (
+                      <div
+                        key={`${song.id}-${index}`}
+                        className={`${styles.trackRow} ${
+                          isCurrentSong ? styles.activeTrack : ""
+                        }`}
+                        onClick={() => void playSong(song, playlistSongs)}
+                      >
+                        <div className={styles.trackIndex}>
+                          {isCurrentSong && playing ? (
+                            <EqualizerBars />
+                          ) : (
+                            <>
+                              <span className={styles.trackNumberText}>
+                                {String(index + 1).padStart(2, "0")}
+                              </span>
+                              <Play size={14} className={styles.hoverPlayIcon} fill="currentColor" />
+                            </>
+                          )}
+                        </div>
+                        <div className={styles.trackMain}>
+                          <div className={styles.trackThumb}>
+                            <CoverImage
+                              src={coverArtUrl(song.coverArt, "120")}
+                              alt=""
+                              spinnerSize={14}
+                              fallback={<Music size={16} />}
+                            />
+                          </div>
+                          <div className={styles.trackMeta}>
+                            <strong>{song.title}</strong>
+                            <small>
+                              {song.artist} · {song.album}
+                            </small>
+                          </div>
+                        </div>
+                        <span className={styles.trackDuration}>
+                          {formatTime(song.duration)}
+                        </span>
+                        <div className={styles.trackRowActions}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              addToQueue([song]);
+                            }}
+                            aria-label="Add to queue"
+                            title="Add to queue"
+                          >
+                            <ListPlus size={16} />
+                          </button>
+                          <button
+                            className={likedSongs.has(song.id) ? styles.liked : ""}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFavorite(song.id);
+                            }}
+                            aria-label={likedSongs.has(song.id) ? "Unfavorite track" : "Favorite track"}
+                            aria-pressed={likedSongs.has(song.id)}
+                          >
+                            <Heart
+                              size={15}
+                              fill={likedSongs.has(song.id) ? "var(--coral)" : "none"}
+                              color={likedSongs.has(song.id) ? "var(--coral)" : "currentColor"}
+                            />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </section>
       </section>
 
@@ -2490,16 +2877,23 @@ export default function Home() {
 
           {/* Scrubber Progress Bar */}
           <div className={styles.progressScrubber}>
-            <span>{formatTime(currentTime)}</span>
-            <div className={styles.scrubBarTrack}>
+            <span>{formatTime(scrubPreview ?? currentTime)}</span>
+            <div
+              className={`${styles.scrubBarTrack} ${styles.scrubBarInteractive}`}
+              onPointerDown={startScrub}
+              onPointerMove={moveScrub}
+              onPointerUp={endScrub}
+              onPointerCancel={cancelScrub}
+            >
               <div
                 className={styles.scrubBarFill}
                 style={{
                   width: `${
                     current?.duration
-                      ? Math.min(100, (currentTime / current.duration) * 100)
+                      ? Math.min(100, ((scrubPreview ?? currentTime) / current.duration) * 100)
                       : 0
                   }%`,
+                  transition: scrubPreview === null ? undefined : "none",
                 }}
               >
                 <div className={styles.scrubThumb} />
@@ -2670,18 +3064,26 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Progress (display only; the host backend has no seek) */}
+          {/* Progress */}
           <div className={styles.progressScrubber} style={{ maxWidth: "none" }}>
-            <span>{formatTime(currentTime)}</span>
-            <div className={styles.scrubBarTrack} style={{ height: "6px" }}>
+            <span>{formatTime(scrubPreview ?? currentTime)}</span>
+            <div
+              className={`${styles.scrubBarTrack} ${styles.scrubBarInteractive}`}
+              style={{ height: "6px" }}
+              onPointerDown={startScrub}
+              onPointerMove={moveScrub}
+              onPointerUp={endScrub}
+              onPointerCancel={cancelScrub}
+            >
               <div
                 className={styles.scrubBarFill}
                 style={{
                   width: `${
                     current.duration
-                      ? Math.min(100, (currentTime / current.duration) * 100)
+                      ? Math.min(100, ((scrubPreview ?? currentTime) / current.duration) * 100)
                       : 0
                   }%`,
+                  transition: scrubPreview === null ? undefined : "none",
                 }}
               />
             </div>
@@ -2938,15 +3340,15 @@ export default function Home() {
             <dl className={styles.statusList}>
               <div>
                 <dt>Host environment</dt>
-                <dd>Raspberry Pi / Linux</dd>
+                <dd>{formatPlatform(hostInfo.platform)}</dd>
               </div>
               <div>
                 <dt>Playback device</dt>
-                <dd>Host speaker only</dd>
+                <dd>{hostInfo.backend ? `${hostInfo.backend} (host speaker)` : "No backend found"}</dd>
               </div>
               <div>
                 <dt>Navidrome</dt>
-                <dd>Subsonic API 1.16.1</dd>
+                <dd>{navidromeStatus.connected ? `Subsonic API ${navidromeStatus.version}` : "Not connected"}</dd>
               </div>
             </dl>
 
@@ -3064,16 +3466,24 @@ export default function Home() {
           <div className={styles.kioskControls}>
             {/* Scrubber */}
             <div className={styles.progressScrubber} style={{ maxWidth: "700px" }}>
-              <span>{formatTime(currentTime)}</span>
-              <div className={styles.scrubBarTrack} style={{ height: "8px" }}>
+              <span>{formatTime(scrubPreview ?? currentTime)}</span>
+              <div
+                className={`${styles.scrubBarTrack} ${styles.scrubBarInteractive}`}
+                style={{ height: "8px" }}
+                onPointerDown={startScrub}
+                onPointerMove={moveScrub}
+                onPointerUp={endScrub}
+                onPointerCancel={cancelScrub}
+              >
                 <div
                   className={styles.scrubBarFill}
                   style={{
                     width: `${
                       current?.duration
-                        ? Math.min(100, (currentTime / current.duration) * 100)
+                        ? Math.min(100, ((scrubPreview ?? currentTime) / current.duration) * 100)
                         : 0
                     }%`,
+                    transition: scrubPreview === null ? undefined : "none",
                   }}
                 />
               </div>

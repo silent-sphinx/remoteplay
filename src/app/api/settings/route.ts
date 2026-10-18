@@ -1,8 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAudioOutputs, getSettings, saveSettings } from "@/lib/settings";
+import { getBackend } from "@/lib/server-player";
+import { subsonicRequest } from "@/lib/subsonic";
 
 export async function GET() {
-  return NextResponse.json({ settings: getSettings(), outputs: getAudioOutputs() }, { headers: { "Cache-Control": "no-store" } });
+  const navidrome = await subsonicRequest("ping")
+    .then((response) => ({ connected: true, version: response.version as string }))
+    .catch(() => ({ connected: false, version: null }));
+
+  return NextResponse.json(
+    {
+      settings: getSettings(),
+      outputs: getAudioOutputs(),
+      host: { platform: process.platform, backend: getBackend() },
+      navidrome,
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(request: NextRequest) {
