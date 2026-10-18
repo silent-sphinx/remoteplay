@@ -195,6 +195,7 @@ export function play(song: ServerSong, startOffset = 0) {
       "--really-quiet",
       "--force-window=no",
       `--input-ipc-server=${mpvIpcPath}`,
+      "--softvol=yes",
       `--volume=${volInt}`,
       "--network-timeout=15",
       ...(startOffset > 0 ? [`--start=${startOffset}`] : []),
