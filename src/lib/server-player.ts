@@ -102,10 +102,20 @@ function stopProcess() {
   }
 }
 
-function sendMpvCommand(command: Record<string, unknown>) {
-  if (!runtime.mpvIpcPath) return;
-  const socket = net.createConnection(runtime.mpvIpcPath);
-  socket.once("error", () => socket.destroy());
+function sendMpvCommand(command: Record<string, unknown>, attempt = 0) {
+  const ipcPath = runtime.mpvIpcPath;
+  if (!ipcPath) return;
+  const socket = net.createConnection(ipcPath);
+  socket.once("error", (error: NodeJS.ErrnoException) => {
+    socket.destroy();
+    if (
+      attempt < 20 &&
+      runtime.mpvIpcPath === ipcPath &&
+      (error.code === "ENOENT" || error.code === "ECONNREFUSED")
+    ) {
+      setTimeout(() => sendMpvCommand(command, attempt + 1), 50);
+    }
+  });
   socket.once("connect", () => {
     socket.end(`${JSON.stringify(command)}\n`);
   });
