@@ -29,6 +29,7 @@ type PlayerRuntime = {
   state: PlayerState;
   processRef: ChildProcess | null;
   activeChildId: number;
+  backend: PlayerBackend | null;
   mpvIpcPath: string | null;
 };
 
@@ -50,6 +51,7 @@ const runtime = (globalRuntime.__remoteplayPlayer ??= {
   },
   processRef: null,
   activeChildId: 0,
+  backend: null,
   mpvIpcPath: null,
 });
 const state = runtime.state;
@@ -169,6 +171,7 @@ export function play(song: ServerSong, startOffset = 0) {
 
   const backend = findBackend();
   stopProcess();
+  runtime.backend = backend;
 
   const currentChildId = ++childCounter;
   runtime.activeChildId = currentChildId;
@@ -331,6 +334,7 @@ export function resume() {
 
 export function stop() {
   stopProcess();
+  runtime.backend = null;
   state.current = null;
   state.playing = false;
   state.position = 0;
@@ -339,7 +343,7 @@ export function stop() {
 }
 
 export function setVolume(volume: number) {
-  const backend = getBackend();
+  const backend = runtime.backend;
   const ffplayStdin = backend === "ffplay" ? runtime.processRef?.stdin : null;
   const previousVolume = state.volume;
   const requestedVolume = Math.max(0, Math.min(1, volume));
