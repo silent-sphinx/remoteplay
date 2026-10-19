@@ -100,6 +100,10 @@ function stopProcess() {
 }
 
 function sendMpvCommand(command: Record<string, unknown>, attempt = 0) {
+  sendMpvCommands([command], attempt);
+}
+
+function sendMpvCommands(commands: Record<string, unknown>[], attempt = 0) {
   const ipcPath = runtime.mpvIpcPath;
   if (!ipcPath) return;
   const socket = net.createConnection(ipcPath);
@@ -110,11 +114,11 @@ function sendMpvCommand(command: Record<string, unknown>, attempt = 0) {
       runtime.mpvIpcPath === ipcPath &&
       (error.code === "ENOENT" || error.code === "ECONNREFUSED")
     ) {
-      setTimeout(() => sendMpvCommand(command, attempt + 1), 50);
+      setTimeout(() => sendMpvCommands(commands, attempt + 1), 50);
     }
   });
   socket.once("connect", () => {
-    socket.end(`${JSON.stringify(command)}\n`);
+    socket.end(`${commands.map((command) => JSON.stringify(command)).join("\n")}\n`);
   });
 }
 
@@ -159,7 +163,10 @@ export function play(song: ServerSong, startOffset = 0) {
 
   findBackend();
   if (runtime.processRef && runtime.backend === "mpv" && runtime.mpvIpcPath) {
-    sendMpvCommand({ command: ["loadfile", url, "replace"] });
+    sendMpvCommands([
+      { command: ["loadfile", url, "replace"] },
+      { command: ["set_property", "pause", false] },
+    ]);
     setTrackState(song, startOffset);
     return;
   }
@@ -260,7 +267,10 @@ export function play(song: ServerSong, startOffset = 0) {
   sendMpvCommand({ command: ["observe_property", 2, "duration"] });
   sendMpvCommand({ command: ["observe_property", 3, "volume"] });
   sendMpvCommand({ command: ["observe_property", 4, "pause"] });
-  sendMpvCommand({ command: ["loadfile", url, "replace"] });
+  sendMpvCommands([
+    { command: ["loadfile", url, "replace"] },
+    { command: ["set_property", "pause", false] },
+  ]);
   if (startOffset > 0) {
     sendMpvCommand({ command: ["seek", startOffset, "absolute", "exact"] });
   }
