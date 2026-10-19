@@ -2,6 +2,8 @@
 
 A lightweight Navidrome/Subsonic music controller designed to run on a Raspberry Pi.
 
+![Overview.png](Overview.png)
+
 Control music over the network via HTTP webpage, audio ALWAYS comes out of the server, not the web browser.
 
 > [!IMPORTANT]
