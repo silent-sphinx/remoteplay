@@ -75,10 +75,7 @@ function findBackend(): PlayerBackend {
 }
 
 function elapsedPosition() {
-  const position =
-    !state.playing || state.startedAt === null
-      ? state.pausedAt
-      : state.pausedAt + (Date.now() - state.startedAt) / 1000;
+  const position = state.position;
   const duration = state.current?.duration;
   return duration && duration > 0 ? Math.min(position, duration) : position;
 }
