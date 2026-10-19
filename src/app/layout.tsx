@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import PwaRegister from "./pwa-register";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -8,6 +9,10 @@ export const metadata: Metadata = {
     capable: true,
     title: "RemotePlay",
     statusBarStyle: "black-translucent",
+  },
+  icons: {
+    icon: "/icon.svg",
+    apple: "/apple-icon.svg",
   },
 };
 
@@ -23,7 +28,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {children}
+        <PwaRegister />
+      </body>
     </html>
   );
 }
