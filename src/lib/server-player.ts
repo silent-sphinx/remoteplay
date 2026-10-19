@@ -31,6 +31,7 @@ type PlayerRuntime = {
   activeChildId: number;
   backend: PlayerBackend | null;
   mpvIpcPath: string | null;
+  mpvEventSocket: net.Socket | null;
 };
 
 const globalRuntime = globalThis as typeof globalThis & {
@@ -53,6 +54,7 @@ const runtime = (globalRuntime.__remoteplayPlayer ??= {
   activeChildId: 0,
   backend: null,
   mpvIpcPath: null,
+  mpvEventSocket: null,
 });
 const state = runtime.state;
 
@@ -95,6 +97,8 @@ function stopProcess() {
     }
   }
   if (runtime.mpvIpcPath) {
+    runtime.mpvEventSocket?.destroy();
+    runtime.mpvEventSocket = null;
     rmSync(runtime.mpvIpcPath, { force: true });
     runtime.mpvIpcPath = null;
   }
@@ -120,6 +124,46 @@ function sendMpvCommands(commands: Record<string, unknown>[], attempt = 0) {
   });
   socket.once("connect", () => {
     socket.end(`${commands.map((command) => JSON.stringify(command)).join("\n")}\n`);
+  });
+}
+
+function observeMpvProperties(ipcPath: string) {
+  if (runtime.mpvEventSocket || runtime.mpvIpcPath !== ipcPath) return;
+
+  const socket = net.createConnection(ipcPath);
+  runtime.mpvEventSocket = socket;
+  let buffer = "";
+  socket.setEncoding("utf8");
+  socket.on("data", (data: string) => {
+    buffer += data;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        handleMpvEvent(JSON.parse(line) as Record<string, unknown>);
+      } catch {
+        // Ignore incomplete or non-JSON IPC output.
+      }
+    }
+  });
+  socket.on("error", () => {
+    socket.destroy();
+  });
+  socket.once("connect", () => {
+    socket.write([
+      ["observe_property", 1, "time-pos"],
+      ["observe_property", 2, "duration"],
+      ["observe_property", 3, "volume"],
+      ["observe_property", 4, "pause"],
+    ].map((command) => JSON.stringify({ command }) ).join("\n") + "\n");
+  });
+  socket.on("close", () => {
+    if (runtime.mpvEventSocket !== socket) return;
+    runtime.mpvEventSocket = null;
+    if (runtime.mpvIpcPath === ipcPath) {
+      setTimeout(() => observeMpvProperties(ipcPath), 50);
+    }
   });
 }
 
@@ -264,10 +308,7 @@ export function play(song: ServerSong, startOffset = 0) {
 
   runtime.backend = "mpv";
   setTrackState(song, startOffset);
-  sendMpvCommand({ command: ["observe_property", 1, "time-pos"] });
-  sendMpvCommand({ command: ["observe_property", 2, "duration"] });
-  sendMpvCommand({ command: ["observe_property", 3, "volume"] });
-  sendMpvCommand({ command: ["observe_property", 4, "pause"] });
+  observeMpvProperties(mpvIpcPath);
   sendMpvCommands([
     { command: ["loadfile", url, "replace"] },
     { command: ["set_property", "pause", false] },
