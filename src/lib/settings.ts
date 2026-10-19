@@ -40,7 +40,7 @@ export function getAudioOutputs(): AudioOutput[] {
       if (outputs.length) return outputs;
     }
     if (process.platform === "darwin") {
-      // system_profiler names are not valid ffplay/mpg123 output IDs.
+      // macOS system_profiler names are not valid mpv output IDs.
       return [];
     }
     if (process.platform === "linux") {

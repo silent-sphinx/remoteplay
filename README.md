@@ -188,9 +188,9 @@ brew install mpv
 sudo apt install mpv
 ```
 
-RemotePlay prefers `mpv`, then falls back to `ffplay` or `mpg123`. The browser is only a remote control and can be closed without stopping the server process immediately.
+RemotePlay uses a persistent `mpv` process for server playback. The browser is only a remote control and can be closed without stopping the server process immediately.
 
-For reliable per-output selection and seamless live volume control, install `mpv`. On macOS, `ffplay` and `mpg123` can play through the system default output, but they cannot expose selectable CoreAudio outputs; RemotePlay applies their volume changes by restarting the current track at its existing position.
+`mpv` provides per-output selection, seamless live volume control, interactive seeking, and synchronized playback progress through its JSON IPC interface.
 
 ## Included controls
 

@@ -812,6 +812,7 @@ export default function Home() {
       wasPlayingRef.current = player.playing;
       setCurrent(player.current);
       setPlaying(player.playing);
+      setVolume(player.volume);
       if (scrubPreview === null) setCurrentTime(player.position);
 
       if (player.error && player.error !== dismissedError) {
@@ -3346,7 +3347,7 @@ export default function Home() {
                   ? "Choose a detected output. The setting is applied to the next track."
                   : hostInfo.backend
                     ? `Install mpv on ${formatPlatform(hostInfo.platform)} to select outputs and change volume while playing.`
-                    : "Install mpv, ffplay, or mpg123 on the host to enable server playback."}
+                    : "Install mpv on the host to enable server playback."}
               </small>
             </div>
 
