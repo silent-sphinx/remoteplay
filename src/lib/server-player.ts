@@ -75,8 +75,12 @@ function findBackend(): PlayerBackend {
 }
 
 function elapsedPosition() {
-  if (!state.playing || state.startedAt === null) return state.pausedAt;
-  return state.pausedAt + (Date.now() - state.startedAt) / 1000;
+  const position =
+    !state.playing || state.startedAt === null
+      ? state.pausedAt
+      : state.pausedAt + (Date.now() - state.startedAt) / 1000;
+  const duration = state.current?.duration;
+  return duration && duration > 0 ? Math.min(position, duration) : position;
 }
 
 function stopProcess() {
