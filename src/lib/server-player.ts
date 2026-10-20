@@ -93,12 +93,15 @@ process.once("SIGINT", () => {
   process.exit(0);
 });
 
+// Allows pointing at an mpv binary that isn't on PATH, e.g. a cask's app bundle on macOS.
+const MPV_BIN = process.env.MPV || "mpv";
+
 function findBackend(): PlayerBackend {
   try {
-    execFileSync("which", ["mpv"], { stdio: "ignore" });
+    execFileSync(MPV_BIN, ["--version"], { stdio: "ignore" });
     return "mpv";
   } catch {
-    throw new Error("No server audio player found. Install mpv on the server.");
+    throw new Error("No server audio player found. Install mpv on the server, or set MPV to its path.");
   }
 }
 
@@ -281,7 +284,7 @@ export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset 
   const mpvIpcPath = `/tmp/remoteplay-mpv-${process.pid}.sock`;
   rmSync(mpvIpcPath, { force: true });
   runtime.mpvIpcPath = mpvIpcPath;
-  const child = spawn("mpv", [
+  const child = spawn(MPV_BIN, [
     "--no-video",
     "--really-quiet",
     "--force-window=no",

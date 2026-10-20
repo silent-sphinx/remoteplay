@@ -19,8 +19,11 @@ export function saveSettings(settings: Partial<RemotePlaySettings>) {
   return next;
 }
 
+// Allows pointing at an mpv binary that isn't on PATH, e.g. a cask's app bundle on macOS.
+const MPV_BIN = process.env.MPV || "mpv";
+
 function getMpvOutputs(): AudioOutput[] {
-  const help = execFileSync("mpv", ["--no-config", "--audio-device=help"], {
+  const help = execFileSync(MPV_BIN, ["--no-config", "--audio-device=help"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
