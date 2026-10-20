@@ -36,7 +36,12 @@ type PlayerRuntime = {
   claimedEndSeq: number;
   playlist: ServerSong[];
   playlistIndex: number;
+  scrobbledCurrent: boolean;
 };
+
+// Standard scrobble threshold: count a play once heard past half the track
+// or 4 minutes, whichever comes first, rather than waiting for full completion.
+const SCROBBLE_THRESHOLD_SECONDS = 240;
 
 const globalRuntime = globalThis as typeof globalThis & {
   __remoteplayPlayer?: PlayerRuntime;
@@ -75,6 +80,7 @@ const runtime = (globalRuntime.__remoteplayPlayer ??= {
   claimedEndSeq: 0,
   playlist: [],
   playlistIndex: 0,
+  scrobbledCurrent: false,
 });
 const state = runtime.state;
 
@@ -369,6 +375,7 @@ function setTrackState(song: ServerSong, position: number) {
   state.pausedAt = position;
   state.startedAt = Date.now();
   state.error = null;
+  runtime.scrobbledCurrent = false;
   // Reports "now playing" to Navidrome; errors here shouldn't disrupt playback.
   scrobble(song.id, false).catch(() => {});
 }
@@ -379,6 +386,13 @@ function handleMpvEvent(event: Record<string, unknown>) {
       state.position = event.data;
       state.pausedAt = event.data;
       if (state.playing) state.startedAt = Date.now();
+      if (!runtime.scrobbledCurrent && state.current?.duration) {
+        const threshold = Math.min(state.current.duration / 2, SCROBBLE_THRESHOLD_SECONDS);
+        if (event.data >= threshold) {
+          runtime.scrobbledCurrent = true;
+          scrobble(state.current.id, true).catch(() => {});
+        }
+      }
     } else if (event.name === "duration" && typeof event.data === "number" && state.current) {
       state.current = { ...state.current, duration: event.data };
     } else if (event.name === "volume" && typeof event.data === "number") {
@@ -392,8 +406,9 @@ function handleMpvEvent(event: Record<string, unknown>) {
   }
   if (event.event === "end-file" && event.reason === "eof") {
     const finishedId = state.current?.id;
-    // Only a natural end-of-track counts as a listen; manual skips/stops report "stop", not "eof".
-    if (finishedId) scrobble(finishedId, true).catch(() => {});
+    // Fallback for tracks that reach eof before crossing the threshold above
+    // (e.g. very short tracks); avoid a duplicate submission otherwise.
+    if (finishedId && !runtime.scrobbledCurrent) scrobble(finishedId, true).catch(() => {});
     runtime.playlistIndex += 1;
     const nextSong = runtime.playlist[runtime.playlistIndex];
     if (nextSong) {
