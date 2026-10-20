@@ -424,6 +424,7 @@ export default function Home() {
   const [isShuffle, setIsShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<"off" | "all" | "one">("off");
   const [likedSongs, setLikedSongs] = useState<Set<string>>(new Set());
+  const [likedAlbums, setLikedAlbums] = useState<Set<string>>(new Set());
 
   // UI Panels
   const [search, setSearch] = useState("");
@@ -439,6 +440,7 @@ export default function Home() {
   const [sheetClosing, setSheetClosing] = useState(false);
   const [sheetDrag, setSheetDrag] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
+  const [volumePopoverOpen, setVolumePopoverOpen] = useState(false);
   const [clockStr, setClockStr] = useState("");
   const [flash, setFlash] = useState<string | null>(null);
   const [searchIndex, setSearchIndex] = useState(-1);
@@ -990,6 +992,23 @@ export default function Home() {
     });
   }
 
+  // Toggle an album's favorite state optimistically, then persist via star/unstar
+  function toggleAlbumFavorite(albumId: string) {
+    const wasLiked = likedAlbums.has(albumId);
+    const apply = (liked: boolean) =>
+      setLikedAlbums((prev) => {
+        const next = new Set(prev);
+        if (liked) next.add(albumId);
+        else next.delete(albumId);
+        return next;
+      });
+    apply(!wasLiked);
+    void api(wasLiked ? "unstar" : "star", { albumId }).catch(() => {
+      apply(wasLiked);
+      showFlash("Couldn't update favorite");
+    });
+  }
+
   function addToQueue(tracks: Song[]) {
     if (!tracks.length) return;
     setQueue((q) => [...q, ...tracks]);
@@ -1365,12 +1384,13 @@ export default function Home() {
       .catch(() => undefined);
   }, []);
 
-  // Seed favorites from the server's starred songs
+  // Seed favorites from the server's starred songs and albums
   useEffect(() => {
-    void api<{ starred2?: { song?: Song[] } }>("getStarred2")
-      .then((data) =>
-        setLikedSongs(new Set((data.starred2?.song || []).map((s) => s.id))),
-      )
+    void api<{ starred2?: { song?: Song[]; album?: AlbumItem[] } }>("getStarred2")
+      .then((data) => {
+        setLikedSongs(new Set((data.starred2?.song || []).map((s) => s.id)));
+        setLikedAlbums(new Set((data.starred2?.album || []).map((a) => a.id)));
+      })
       .catch(() => undefined);
   }, []);
 
@@ -1406,6 +1426,7 @@ export default function Home() {
       else if (nowPlayingOpen) closeNowPlaying();
       else if (queueOpen) setQueueOpen(false);
       else if (kioskOpen) setKioskOpen(false);
+      else if (volumePopoverOpen) setVolumePopoverOpen(false);
       return;
     }
 
@@ -1786,6 +1807,32 @@ export default function Home() {
                           }
                         />
 
+                        {/* Quick Favorite Hover Button */}
+                        <div
+                          className={styles.cardFavOverlay}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleAlbumFavorite(album.id);
+                          }}
+                        >
+                          <button
+                            className={`${styles.cardFavBtn} ${
+                              likedAlbums.has(album.id) ? styles.liked : ""
+                            }`}
+                            aria-label={
+                              likedAlbums.has(album.id)
+                                ? `Unfavorite album ${album.name}`
+                                : `Favorite album ${album.name}`
+                            }
+                            aria-pressed={likedAlbums.has(album.id)}
+                          >
+                            <Heart
+                              size={15}
+                              fill={likedAlbums.has(album.id) ? "var(--coral)" : "none"}
+                            />
+                          </button>
+                        </div>
+
                         {/* Quick Play Hover Button (Plays on host speaker) */}
                         <div
                           className={styles.cardPlayOverlay}
@@ -1988,6 +2035,24 @@ export default function Home() {
                       >
                         <ListMusic size={15} /> Add to Queue
                       </button>
+                      <button
+                        className={`${styles.secondaryActionBtn} ${
+                          likedAlbums.has(selectedAlbum.id) ? styles.liked : ""
+                        }`}
+                        onClick={() => toggleAlbumFavorite(selectedAlbum.id)}
+                        aria-label={
+                          likedAlbums.has(selectedAlbum.id)
+                            ? "Unfavorite album"
+                            : "Favorite album"
+                        }
+                        aria-pressed={likedAlbums.has(selectedAlbum.id)}
+                      >
+                        <Heart
+                          size={15}
+                          fill={likedAlbums.has(selectedAlbum.id) ? "var(--coral)" : "none"}
+                        />
+                        {likedAlbums.has(selectedAlbum.id) ? "Favorited" : "Favorite"}
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -2138,6 +2203,30 @@ export default function Home() {
                             </div>
                           }
                         />
+                        <div
+                          className={styles.cardFavOverlay}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleAlbumFavorite(album.id);
+                          }}
+                        >
+                          <button
+                            className={`${styles.cardFavBtn} ${
+                              likedAlbums.has(album.id) ? styles.liked : ""
+                            }`}
+                            aria-label={
+                              likedAlbums.has(album.id)
+                                ? `Unfavorite album ${album.name}`
+                                : `Favorite album ${album.name}`
+                            }
+                            aria-pressed={likedAlbums.has(album.id)}
+                          >
+                            <Heart
+                              size={15}
+                              fill={likedAlbums.has(album.id) ? "var(--coral)" : "none"}
+                            />
+                          </button>
+                        </div>
                         <div
                           className={styles.cardPlayOverlay}
                           onClick={(e) => {
@@ -2948,6 +3037,43 @@ export default function Home() {
               className={styles.volumeSlider}
               aria-label="Host volume slider"
             />
+          </div>
+
+          {/* Volume popover (compact/mobile bar, where the inline slider has no room) */}
+          <div className={styles.volumePopoverWrap}>
+            <button
+              className={`${styles.iconButton} ${styles.volumePopoverTrigger} ${
+                volumePopoverOpen ? styles.volumePopoverTriggerActive : ""
+              }`}
+              onClick={() => setVolumePopoverOpen((open) => !open)}
+              aria-label="Adjust volume"
+              aria-expanded={volumePopoverOpen}
+            >
+              {isMuted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+            </button>
+            {volumePopoverOpen && (
+              <>
+                <div
+                  className={styles.popoverBackdrop}
+                  onClick={() => setVolumePopoverOpen(false)}
+                />
+                <div className={styles.volumePopover} role="dialog" aria-label="Volume">
+                  <button onClick={toggleMute} aria-label={isMuted ? "Unmute" : "Mute"}>
+                    {isMuted || volume === 0 ? <VolumeX size={17} /> : <Volume2 size={17} />}
+                  </button>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={isMuted ? 0 : volume}
+                    onChange={(e) => handleVolumeChange(Number(e.target.value))}
+                    className={styles.volumeSlider}
+                    aria-label="Host volume slider"
+                  />
+                </div>
+              </>
+            )}
           </div>
 
           {/* Queue Drawer Trigger */}
