@@ -1861,7 +1861,10 @@ export default function Home() {
                   <button
                     className={styles.paginationBtn}
                     disabled={albumPage === 0 || loading === "albums"}
-                    onClick={() => void loadAlbums(albumPage - 1)}
+                    onClick={() => {
+                      libraryRef.current?.scrollTo({ top: 0 });
+                      void loadAlbums(albumPage - 1);
+                    }}
                   >
                     ← Previous
                   </button>
@@ -1871,7 +1874,10 @@ export default function Home() {
                   <button
                     className={styles.paginationBtn}
                     disabled={!hasMoreAlbums || loading === "albums"}
-                    onClick={() => void loadAlbums(albumPage + 1)}
+                    onClick={() => {
+                      libraryRef.current?.scrollTo({ top: 0 });
+                      void loadAlbums(albumPage + 1);
+                    }}
                   >
                     Next →
                   </button>
