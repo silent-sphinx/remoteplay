@@ -42,6 +42,18 @@ const globalRuntime = globalThis as typeof globalThis & {
 
 let childCounter = 0;
 
+// Cubic taper: the UI slider is linear (0-1), but perceived loudness isn't,
+// so a linear mapping to mpv's amplitude makes the low end feel oversensitive.
+function volumeToMpv(linear: number): number {
+  const clamped = Math.max(0, Math.min(1, linear));
+  return Math.round(clamped ** 3 * 100);
+}
+
+function mpvToVolume(percent: number): number {
+  const clamped = Math.max(0, Math.min(100, percent));
+  return Math.max(0, Math.min(1, Math.cbrt(clamped / 100)));
+}
+
 const runtime = (globalRuntime.__remoteplayPlayer ??= {
   state: {
     current: null,
@@ -241,7 +253,7 @@ export function play(song: ServerSong, startOffset = 0, afterEnd?: number) {
   const output = isValidAudioOutput(configuredOutput)
     ? configuredOutput
     : "auto";
-  const volInt = Math.max(0, Math.min(100, Math.round(state.volume * 100)));
+  const volInt = volumeToMpv(state.volume);
 
   const mpvIpcPath = `/tmp/remoteplay-mpv-${process.pid}.sock`;
   rmSync(mpvIpcPath, { force: true });
@@ -351,7 +363,7 @@ function handleMpvEvent(event: Record<string, unknown>) {
     } else if (event.name === "duration" && typeof event.data === "number" && state.current) {
       state.current = { ...state.current, duration: event.data };
     } else if (event.name === "volume" && typeof event.data === "number") {
-      state.volume = Math.max(0, Math.min(1, event.data / 100));
+      state.volume = mpvToVolume(event.data);
     } else if (event.name === "pause" && typeof event.data === "boolean") {
       state.playing = !event.data;
       state.pausedAt = elapsedPosition();
@@ -415,7 +427,7 @@ export function setVolume(volume: number) {
   const requestedVolume = Math.max(0, Math.min(1, volume));
   state.volume = requestedVolume;
   if (runtime.backend === "mpv" && runtime.processRef) {
-    sendMpvCommand({ command: ["set_property", "volume", Math.round(state.volume * 100)] });
+    sendMpvCommand({ command: ["set_property", "volume", volumeToMpv(state.volume)] });
   }
 }
 
