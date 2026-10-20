@@ -36,7 +36,6 @@ import {
   SkipBack,
   SkipForward,
   Sparkles,
-  Speaker,
   Volume2,
   VolumeX,
   X,
@@ -1691,23 +1690,6 @@ export default function Home() {
             </nav>
           </div>
 
-          {/* HARDWARE DEVICE CARD */}
-          <button
-            className={styles.deviceCard}
-            onClick={() => setSettingsOpen(true)}
-            title="Click to configure host audio output sink"
-          >
-            <div className={styles.deviceIconBadge}>
-              <Speaker size={18} />
-            </div>
-            <div className={styles.deviceInfo}>
-              <strong>Raspberry Pi Audio</strong>
-              <small>
-                {audioOutput === "auto" ? "Default Output" : audioOutput} · {hostInfo.backend || "No player"}
-              </small>
-            </div>
-            <span className={styles.liveDot} />
-          </button>
         </aside>
 
         {/* LIBRARY DISPLAY */}
