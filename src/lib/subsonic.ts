@@ -31,6 +31,10 @@ export async function subsonicRequest(method: string, params: Record<string, str
   return subsonic;
 }
 
+export async function scrobble(id: string, submission: boolean) {
+  await subsonicRequest("scrobble", { id, submission: String(submission) });
+}
+
 export function coverArtUrl(id: string | undefined, size = "640") {
   if (!id) return null;
   return `/api/cover/${encodeURIComponent(id)}?size=${size}`;

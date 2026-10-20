@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import net from "node:net";
 import { rmSync } from "node:fs";
-import { subsonicUrl } from "@/lib/subsonic";
+import { subsonicUrl, scrobble } from "@/lib/subsonic";
 import { getSettings, isValidAudioOutput } from "@/lib/settings";
 
 export type ServerSong = {
@@ -369,6 +369,8 @@ function setTrackState(song: ServerSong, position: number) {
   state.pausedAt = position;
   state.startedAt = Date.now();
   state.error = null;
+  // Reports "now playing" to Navidrome; errors here shouldn't disrupt playback.
+  scrobble(song.id, false).catch(() => {});
 }
 
 function handleMpvEvent(event: Record<string, unknown>) {
@@ -390,6 +392,8 @@ function handleMpvEvent(event: Record<string, unknown>) {
   }
   if (event.event === "end-file" && event.reason === "eof") {
     const finishedId = state.current?.id;
+    // Only a natural end-of-track counts as a listen; manual skips/stops report "stop", not "eof".
+    if (finishedId) scrobble(finishedId, true).catch(() => {});
     runtime.playlistIndex += 1;
     const nextSong = runtime.playlist[runtime.playlistIndex];
     if (nextSong) {
