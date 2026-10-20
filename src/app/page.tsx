@@ -472,8 +472,8 @@ export default function Home() {
     version: null,
   });
 
-  // Track host state transitions for auto-advance in queue
-  const wasPlayingRef = useRef(false);
+  // Last host track-end seen, so each natural end advances the queue at most once
+  const lastEndSeqRef = useRef<number | null>(null);
   const currentSongIdRef = useRef<string | null>(null);
   currentSongIdRef.current = current?.id || null;
 
@@ -793,23 +793,28 @@ export default function Home() {
         position: number;
         volume: number;
         error: string | null;
+        ended: { seq: number; songId: string; ago: number } | null;
       }>();
 
-      // Detect natural track completion on host to advance queue
+      // Advance only on a fresh, natural end of the track this client was showing
+      const ended = player.ended;
+      const lastEndSeq = lastEndSeqRef.current;
+      lastEndSeqRef.current = ended?.seq ?? 0;
       if (
-        wasPlayingRef.current &&
-        !player.playing &&
-        !player.current &&
-        currentSongIdRef.current &&
-        !player.error
+        ended &&
+        lastEndSeq !== null &&
+        ended.seq !== lastEndSeq &&
+        ended.ago < 5000 &&
+        ended.songId === currentSongIdRef.current &&
+        !player.current
       ) {
-        wasPlayingRef.current = false;
-        if (repeatMode === "one" && current) void playSong(current);
-        else nextSong();
-        return;
+        const next = repeatMode === "one" && current ? current : pickNextSong();
+        if (next) {
+          void playSong(next, queue, ended.seq);
+          return;
+        }
       }
 
-      wasPlayingRef.current = player.playing;
       setCurrent(player.current);
       setPlaying(player.playing);
       setVolume(player.volume);
@@ -826,7 +831,7 @@ export default function Home() {
   }
 
   // Play Track on Host Server
-  async function playSong(song: Song, nextQueue = queue) {
+  async function playSong(song: Song, nextQueue = queue, afterEnd?: number) {
     setCurrent(song);
     setCurrentTime(0);
     setQueue(nextQueue);
@@ -834,12 +839,11 @@ export default function Home() {
       const player = await playerApi<{ playing: boolean; position: number }>({
         action: "play",
         song,
+        afterEnd,
       });
       setPlaying(player.playing);
-      wasPlayingRef.current = player.playing;
     } catch (caught) {
       setPlaying(false);
-      wasPlayingRef.current = false;
       const msg =
         caught instanceof Error
           ? caught.message
@@ -861,7 +865,6 @@ export default function Home() {
         action: playing ? "pause" : "resume",
       });
       setPlaying(player.playing);
-      wasPlayingRef.current = player.playing;
       setCurrentTime(player.position);
     } catch {
       setErrorNotice("Host player playback command failed");
@@ -869,7 +872,7 @@ export default function Home() {
   }
 
   // Next Track on Host
-  function nextSong() {
+  function pickNextSong(): Song | undefined {
     if (!current || !queue.length) return;
     const currentIndex = queue.findIndex((s) => s.id === current.id);
     let nextIndex = currentIndex + 1;
@@ -884,7 +887,11 @@ export default function Home() {
       }
     }
 
-    const next = queue[nextIndex];
+    return queue[nextIndex];
+  }
+
+  function nextSong() {
+    const next = pickNextSong();
     if (next) void playSong(next);
   }
 
@@ -936,7 +943,6 @@ export default function Home() {
     })
       .then((player) => {
         setPlaying(player.playing);
-        wasPlayingRef.current = player.playing;
         setCurrentTime(player.position);
       })
       .catch(() => setErrorNotice("Host player seek failed"))

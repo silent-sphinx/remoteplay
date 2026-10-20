@@ -32,6 +32,8 @@ type PlayerRuntime = {
   backend: PlayerBackend | null;
   mpvIpcPath: string | null;
   mpvEventSocket: net.Socket | null;
+  ended: { seq: number; songId: string; at: number } | null;
+  claimedEndSeq: number;
 };
 
 const globalRuntime = globalThis as typeof globalThis & {
@@ -55,6 +57,8 @@ const runtime = (globalRuntime.__remoteplayPlayer ??= {
   backend: null,
   mpvIpcPath: null,
   mpvEventSocket: null,
+  ended: null,
+  claimedEndSeq: 0,
 });
 const state = runtime.state;
 
@@ -175,6 +179,11 @@ export function getPlayerState() {
     volume: state.volume,
     error: state.error,
     available: Boolean(runtime.processRef) || canPlay(),
+    ended: runtime.ended && {
+      seq: runtime.ended.seq,
+      songId: runtime.ended.songId,
+      ago: Date.now() - runtime.ended.at,
+    },
   };
 }
 
@@ -202,9 +211,15 @@ export function getAudioControlCapabilities() {
   };
 }
 
-export function play(song: ServerSong, startOffset = 0) {
+export function play(song: ServerSong, startOffset = 0, afterEnd?: number) {
   const url = subsonicUrl("stream", { id: song.id });
   if (!url) throw new Error("Navidrome is not configured");
+
+  // Auto-advance is accepted once per natural track end, from whichever client asks first
+  if (afterEnd !== undefined) {
+    if (afterEnd !== runtime.ended?.seq || afterEnd === runtime.claimedEndSeq) return;
+    runtime.claimedEndSeq = afterEnd;
+  }
 
   findBackend();
   if (runtime.processRef && runtime.backend === "mpv" && runtime.mpvIpcPath) {
@@ -345,6 +360,13 @@ function handleMpvEvent(event: Record<string, unknown>) {
     return;
   }
   if (event.event === "end-file" && event.reason === "eof") {
+    if (state.current) {
+      runtime.ended = {
+        seq: (runtime.ended?.seq ?? 0) + 1,
+        songId: state.current.id,
+        at: Date.now(),
+      };
+    }
     state.current = null;
     state.playing = false;
     state.position = 0;
