@@ -204,6 +204,7 @@ export function getPlayerState() {
     volume: state.volume,
     error: state.error,
     available: Boolean(runtime.processRef) || canPlay(),
+    queue: runtime.playlist.slice(runtime.playlistIndex + 1),
     ended: runtime.ended && {
       seq: runtime.ended.seq,
       songId: runtime.ended.songId,

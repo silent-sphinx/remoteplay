@@ -415,6 +415,9 @@ export default function Home() {
 
   // Queue and Now Playing (Strictly Host Audio)
   const [queue, setQueue] = useState<Song[]>([]);
+  // Mirrors the host's own upcoming playlist, so a client that never issued
+  // the play command (e.g. a kiosk tablet) still knows what's up next.
+  const [hostQueue, setHostQueue] = useState<Song[]>([]);
   const [current, setCurrent] = useState<Song | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [scrubPreview, setScrubPreview] = useState<number | null>(null);
@@ -441,7 +444,6 @@ export default function Home() {
   const [sheetDrag, setSheetDrag] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
   const [volumePopoverOpen, setVolumePopoverOpen] = useState(false);
-  const [clockStr, setClockStr] = useState("");
   const [flash, setFlash] = useState<string | null>(null);
   const [searchIndex, setSearchIndex] = useState(-1);
   const [albumBackView, setAlbumBackView] = useState<View>("albums");
@@ -478,19 +480,6 @@ export default function Home() {
   const lastEndSeqRef = useRef<number | null>(null);
   const currentSongIdRef = useRef<string | null>(null);
   currentSongIdRef.current = current?.id || null;
-
-  // Clock for Kiosk mode
-  useEffect(() => {
-    const updateTime = () => {
-      const now = new Date();
-      setClockStr(
-        now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-      );
-    };
-    updateTime();
-    const interval = window.setInterval(updateTime, 1000);
-    return () => window.clearInterval(interval);
-  }, []);
 
   // Track the mobile breakpoint so the expandable Now Playing sheet is wired
   // up only where the compact player bar hides the scrubber and controls
@@ -795,6 +784,7 @@ export default function Home() {
         position: number;
         volume: number;
         error: string | null;
+        queue: Song[];
         ended: { seq: number; songId: string; ago: number } | null;
       }>();
 
@@ -820,6 +810,7 @@ export default function Home() {
       setCurrent(player.current);
       setPlaying(player.playing);
       setVolume(player.volume);
+      setHostQueue(player.queue || []);
       if (scrubPreview === null) setCurrentTime(player.position);
 
       if (player.error && player.error !== dismissedError) {
@@ -1100,7 +1091,13 @@ export default function Home() {
     currentQueueIndex >= 0
       ? queue[currentQueueIndex + 1] ||
         (repeatMode === "all" ? queue[0] : undefined)
-      : undefined;
+      : hostQueue[0];
+  const timeRemaining = current?.duration
+    ? current.duration - currentTime
+    : Infinity;
+  const showUpNextPreview =
+    !!upNext && !isShuffle && timeRemaining <= 20 && timeRemaining > 0;
+  const upNextCountdown = Math.max(0, Math.ceil(timeRemaining));
 
   // Bring the playing track into view when the queue opens or advances
   useEffect(() => {
@@ -3217,7 +3214,6 @@ export default function Home() {
 
           {/* Progress */}
           <div className={styles.progressScrubber} style={{ maxWidth: "none" }}>
-            <span>{formatTime(scrubPreview ?? currentTime)}</span>
             <div
               className={`${styles.scrubBarTrack} ${styles.scrubBarInteractive}`}
               style={{ height: "6px" }}
@@ -3309,24 +3305,41 @@ export default function Home() {
               className={styles.volumeSlider}
               aria-label="Host volume slider"
             />
+            <span className={styles.sheetVolumeLevel}>
+              {Math.round((isMuted ? 0 : volume) * 100)}%
+            </span>
           </div>
-
-          {upNext && !isShuffle && (
-            <button
-              className={styles.sheetUpNext}
-              onClick={() => {
-                closeNowPlaying();
-                setQueueOpen(true);
-              }}
-            >
-              <small>Up next</small>
-              <span>
-                {upNext.title}
-                {upNext.artist ? ` · ${upNext.artist}` : ""}
-              </span>
-            </button>
-          )}
         </div>
+      )}
+
+      {/* Up next preview (last 20s of the current track) */}
+      {isMobile && nowPlayingOpen && current && showUpNextPreview && upNext && (
+        <button
+          className={styles.upNextPreview}
+          onClick={() => {
+            closeNowPlaying();
+            setQueueOpen(true);
+          }}
+          aria-label={`Up next: ${upNext.title}${
+            upNext.artist ? ` by ${upNext.artist}` : ""
+          }`}
+        >
+          <div className={styles.upNextPreviewArt}>
+            <CoverImage
+              src={coverArtUrl(upNext.coverArt, "100")}
+              alt=""
+              spinnerSize={14}
+              fallback={<Disc3 size={18} color="var(--accent)" />}
+            />
+          </div>
+          <div className={styles.upNextPreviewMeta}>
+            <small>Up next in {upNextCountdown}s</small>
+            <span>{upNext.title}</span>
+            <span className={styles.upNextPreviewArtist}>
+              {upNext.artist || "Unknown Artist"}
+            </span>
+          </div>
+        </button>
       )}
 
       {/* QUEUE DRAWER */}
@@ -3550,7 +3563,6 @@ export default function Home() {
                 REMOTE<span>PLAY</span>
               </span>
             </div>
-            <div className={styles.kioskClock}>{clockStr}</div>
             <button
               className={styles.iconButton}
               onClick={() => setKioskOpen(false)}
@@ -3622,7 +3634,6 @@ export default function Home() {
           <div className={styles.kioskControls}>
             {/* Scrubber */}
             <div className={styles.progressScrubber} style={{ maxWidth: "700px" }}>
-              <span>{formatTime(scrubPreview ?? currentTime)}</span>
               <div
                 className={`${styles.scrubBarTrack} ${styles.scrubBarInteractive}`}
                 style={{ height: "8px" }}
@@ -3676,7 +3687,58 @@ export default function Home() {
                 <SkipForward size={28} fill="currentColor" />
               </button>
             </div>
+
+            {/* Volume */}
+            <div className={styles.kioskVolume}>
+              <button onClick={toggleMute} aria-label={isMuted ? "Unmute" : "Mute"}>
+                {isMuted || volume === 0 ? (
+                  <VolumeX size={22} />
+                ) : (
+                  <Volume2 size={22} />
+                )}
+              </button>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={isMuted ? 0 : volume}
+                onChange={(e) => handleVolumeChange(Number(e.target.value))}
+                className={styles.volumeSlider}
+                aria-label="Host volume slider"
+              />
+              <span className={styles.sheetVolumeLevel}>
+                {Math.round((isMuted ? 0 : volume) * 100)}%
+              </span>
+            </div>
           </div>
+
+          {/* Up next preview (last 20s of the current track) */}
+          {showUpNextPreview && upNext && (
+            <button
+              className={`${styles.upNextPreview} ${styles.kioskUpNextPreview}`}
+              onClick={() => setQueueOpen(true)}
+              aria-label={`Up next: ${upNext.title}${
+                upNext.artist ? ` by ${upNext.artist}` : ""
+              }`}
+            >
+              <div className={styles.upNextPreviewArt}>
+                <CoverImage
+                  src={coverArtUrl(upNext.coverArt, "100")}
+                  alt=""
+                  spinnerSize={28}
+                  fallback={<Disc3 size={32} color="var(--accent)" />}
+                />
+              </div>
+              <div className={styles.upNextPreviewMeta}>
+                <small>Up next in {upNextCountdown}s</small>
+                <span>{upNext.title}</span>
+                <span className={styles.upNextPreviewArtist}>
+                  {upNext.artist || "Unknown Artist"}
+                </span>
+              </div>
+            </button>
+          )}
         </div>
       )}
 
