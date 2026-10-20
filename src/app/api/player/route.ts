@@ -7,8 +7,8 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json() as { action?: string; song?: ServerSong; volume?: number; position?: number; afterEnd?: number };
-    if (body.action === "play" && body.song) play(body.song, 0, body.afterEnd);
+    const body = await request.json() as { action?: string; song?: ServerSong; queue?: ServerSong[]; volume?: number; position?: number; afterEnd?: number };
+    if (body.action === "play" && body.song) play(body.song, body.queue ?? [], 0, body.afterEnd);
     else if (body.action === "pause") pause();
     else if (body.action === "resume") resume();
     else if (body.action === "stop") stop();

@@ -34,6 +34,8 @@ type PlayerRuntime = {
   mpvEventSocket: net.Socket | null;
   ended: { seq: number; songId: string; at: number } | null;
   claimedEndSeq: number;
+  playlist: ServerSong[];
+  playlistIndex: number;
 };
 
 const globalRuntime = globalThis as typeof globalThis & {
@@ -71,6 +73,8 @@ const runtime = (globalRuntime.__remoteplayPlayer ??= {
   mpvEventSocket: null,
   ended: null,
   claimedEndSeq: 0,
+  playlist: [],
+  playlistIndex: 0,
 });
 const state = runtime.state;
 
@@ -223,7 +227,7 @@ export function getAudioControlCapabilities() {
   };
 }
 
-export function play(song: ServerSong, startOffset = 0, afterEnd?: number) {
+export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset = 0, afterEnd?: number) {
   const url = subsonicUrl("stream", { id: song.id });
   if (!url) throw new Error("Navidrome is not configured");
 
@@ -234,9 +238,22 @@ export function play(song: ServerSong, startOffset = 0, afterEnd?: number) {
   }
 
   findBackend();
+
+  // Mirror the rest of the queue into mpv's own playlist so the host keeps
+  // advancing through it on its own, instead of depending on a client's poll loop.
+  runtime.playlist = [song, ...upcoming];
+  runtime.playlistIndex = 0;
+  const loadCommands = [
+    { command: ["loadfile", url, "replace"] },
+    ...upcoming.map((next) => {
+      const nextUrl = subsonicUrl("stream", { id: next.id });
+      return { command: ["loadfile", nextUrl, "append"] };
+    }),
+  ];
+
   if (runtime.processRef && runtime.backend === "mpv" && runtime.mpvIpcPath) {
     sendMpvCommands([
-      { command: ["loadfile", url, "replace"] },
+      ...loadCommands,
       { command: ["set_property", "pause", false] },
     ]);
     setTrackState(song, startOffset);
@@ -337,7 +354,7 @@ export function play(song: ServerSong, startOffset = 0, afterEnd?: number) {
   setTrackState(song, startOffset);
   observeMpvProperties(mpvIpcPath);
   sendMpvCommands([
-    { command: ["loadfile", url, "replace"] },
+    ...loadCommands,
     { command: ["set_property", "pause", false] },
   ]);
   if (startOffset > 0) {
@@ -372,10 +389,18 @@ function handleMpvEvent(event: Record<string, unknown>) {
     return;
   }
   if (event.event === "end-file" && event.reason === "eof") {
-    if (state.current) {
+    const finishedId = state.current?.id;
+    runtime.playlistIndex += 1;
+    const nextSong = runtime.playlist[runtime.playlistIndex];
+    if (nextSong) {
+      // mpv is already auto-advancing through its own playlist; mirror that here
+      setTrackState(nextSong, 0);
+      return;
+    }
+    if (finishedId) {
       runtime.ended = {
         seq: (runtime.ended?.seq ?? 0) + 1,
-        songId: state.current.id,
+        songId: finishedId,
         at: Date.now(),
       };
     }
@@ -416,6 +441,8 @@ export function resume() {
 export function stop() {
   stopProcess();
   runtime.backend = null;
+  runtime.playlist = [];
+  runtime.playlistIndex = 0;
   state.current = null;
   state.playing = false;
   state.position = 0;

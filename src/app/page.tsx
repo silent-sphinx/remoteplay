@@ -835,10 +835,19 @@ export default function Home() {
     setCurrent(song);
     setCurrentTime(0);
     setQueue(nextQueue);
+    // Shuffle picks a new random track on every advance, and repeat-one replays
+    // the same track, so neither can be mirrored as a fixed server-side playlist.
+    // Leave those advances to the client-driven fallback in syncPlayer instead.
+    const songIndex = nextQueue.findIndex((s) => s.id === song.id);
+    const upcoming =
+      songIndex >= 0 && !isShuffle && repeatMode !== "one"
+        ? nextQueue.slice(songIndex + 1)
+        : [];
     try {
       const player = await playerApi<{ playing: boolean; position: number }>({
         action: "play",
         song,
+        queue: upcoming,
         afterEnd,
       });
       setPlaying(player.playing);
