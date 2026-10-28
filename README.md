@@ -86,6 +86,7 @@ Type=simple
 User=remoteplay
 Group=remoteplay
 WorkingDirectory=/opt/remoteplay
+CacheDirectory=remoteplay
 Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=HOSTNAME=0.0.0.0
@@ -150,6 +151,7 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/remoteplay
+CacheDirectory=remoteplay
 Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=HOSTNAME=0.0.0.0
@@ -177,6 +179,41 @@ journalctl --user -u remoteplay -f
 ```
 
 Do not run both service options at the same time because they would both try to use port 3000.
+
+## Cover art cache
+
+Album art is fetched from Navidrome once and then cached on disk, so repeat views are
+served locally and Navidrome is not asked to resize the same image again. Identical
+requests arriving together share a single upstream fetch, and the number of resizes in
+flight is capped so opening a large album grid cannot flood Navidrome.
+
+The cache directory is picked in this order:
+
+| Setting | Default |
+| --- | --- |
+| `REMOTEPLAY_COVER_CACHE` | unset |
+| systemd `CacheDirectory=remoteplay` | `/var/cache/remoteplay/covers` |
+| fallback | `remoteplay-covers` in the system temp directory |
+
+The service user is not expected to have write access to `/opt/remoteplay`, so keep
+`CacheDirectory=remoteplay` in the unit file. Two optional variables tune the cache:
+`REMOTEPLAY_COVER_CONCURRENCY` (default `4`) limits simultaneous upstream requests, and
+`REMOTEPLAY_COVER_CACHE_ENTRIES` (default `3000`) bounds how many files are kept before
+the oldest are dropped. Clearing the cache is safe at any time:
+
+```bash
+sudo systemctl stop remoteplay
+sudo rm -rf /var/cache/remoteplay/covers
+sudo systemctl start remoteplay
+```
+
+## Behind a reverse proxy
+
+RemotePlay builds all of its own URLs relative to the site root, so proxy it at the root
+of a hostname rather than under a subpath. A `handle_path /remoteplay/*` style prefix
+strips the path upstream while the browser keeps requesting `/api/cover/...` at the root,
+which makes every cover and API call miss. Leave the proxy's response timeouts at their
+defaults; the first request for an uncached cover waits on a Navidrome resize.
 
 ## Server audio
 
