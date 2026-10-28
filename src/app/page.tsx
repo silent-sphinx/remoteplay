@@ -59,6 +59,7 @@ type AlbumItem = {
   id: string;
   name: string;
   artist?: string;
+  artistId?: string;
   coverArt?: string;
   year?: number;
   songCount?: number;
@@ -824,10 +825,16 @@ export default function Home() {
       setSelectedAlbum(album);
       setAlbumSongs([]);
       setView("albumDetail");
-      const data = await api<{ album?: { song?: Song[] } }>("getAlbum", {
-        id: album.id,
-      });
+      const data = await api<{
+        album?: { song?: Song[]; artistId?: string };
+      }>("getAlbum", { id: album.id });
       setAlbumSongs(data.album?.song || []);
+      const detailArtistId = data.album?.artistId;
+      if (detailArtistId && !album.artistId) {
+        setSelectedAlbum((prev) =>
+          prev?.id === album.id ? { ...prev, artistId: detailArtistId } : prev,
+        );
+      }
     } catch (caught) {
       setErrorNotice(
         caught instanceof Error ? caught.message : "Unable to open album",
@@ -890,11 +897,24 @@ export default function Home() {
       setArtistAlbums([]);
       setArtistSongs([]);
       setView("artistDetail");
-      const data = await api<{ artist?: { album?: AlbumItem[] } }>(
-        "getArtist",
-        { id: artist.id },
-      );
-      const albums = data.artist?.album || [];
+      const data = await api<{
+        artist?: Artist & { album?: AlbumItem[] };
+      }>("getArtist", { id: artist.id });
+      const detail = data.artist;
+      const albums = detail?.album || [];
+      if (detail) {
+        setSelectedArtist((prev) =>
+          prev?.id === artist.id
+            ? {
+                ...prev,
+                name: detail.name || prev.name,
+                coverArt: detail.coverArt ?? prev.coverArt,
+                artistImageUrl: detail.artistImageUrl ?? prev.artistImageUrl,
+                albumCount: detail.albumCount ?? prev.albumCount,
+              }
+            : prev,
+        );
+      }
       const albumResults = await Promise.all(
         albums.map(async (alb) => {
           try {
@@ -1275,6 +1295,19 @@ export default function Home() {
 
   const visibleArtists = sortedArtists.slice(0, artistPage * 50);
   const hasMoreArtists = visibleArtists.length < sortedArtists.length;
+
+  // Album artist as a navigable target, by id when known or by matching name
+  const albumArtistLink = useMemo<Artist | null>(() => {
+    if (!selectedAlbum?.artist) return null;
+    if (selectedAlbum.artistId) {
+      return { id: selectedAlbum.artistId, name: selectedAlbum.artist };
+    }
+    const match = artists.find(
+      (artist) =>
+        artist.name.toLowerCase() === selectedAlbum.artist?.toLowerCase(),
+    );
+    return match || null;
+  }, [selectedAlbum, artists]);
 
   function changeView(nextView: View, push = true) {
     if (push && nextView !== view) pushNav({ view: nextView, albumSort });
@@ -2154,7 +2187,16 @@ export default function Home() {
                     <p className={styles.eyebrow}>ALBUM</p>
                     <h2>{selectedAlbum.name}</h2>
                     <div className={styles.heroMetaSubtitle}>
-                      <strong>{selectedAlbum.artist || "Unknown Artist"}</strong>
+                      {albumArtistLink ? (
+                        <button
+                          className={styles.artistLink}
+                          onClick={() => void openArtist(albumArtistLink)}
+                        >
+                          {albumArtistLink.name}
+                        </button>
+                      ) : (
+                        <strong>{selectedAlbum.artist || "Unknown Artist"}</strong>
+                      )}
                       {selectedAlbum.year && <span>· {selectedAlbum.year}</span>}
                       {albumSongs.length > 0 && (
                         <span>
