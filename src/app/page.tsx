@@ -239,6 +239,24 @@ function sortSongs(list: Song[], sort: TrackSort) {
   return list;
 }
 
+function sameSong(a: Song | null, b: Song | null) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.id === b.id &&
+    a.title === b.title &&
+    a.artist === b.artist &&
+    a.album === b.album &&
+    a.duration === b.duration &&
+    a.coverArt === b.coverArt
+  );
+}
+
+function sameQueue(a: Song[], b: Song[] | undefined) {
+  if (!b) return a.length === 0;
+  return a.length === b.length && a.every((song, index) => song.id === b[index].id);
+}
+
 // Artwork with a loading spinner until the image resolves, and a graceful fallback on error
 function CoverImage({
   src,
@@ -806,10 +824,12 @@ export default function Home() {
         }
       }
 
-      setCurrent(player.current);
+      // The poll runs every second, so keep the previous object whenever the
+      // host reports the same track or queue and spare the tree a re-render
+      setCurrent((prev) => (sameSong(prev, player.current) ? prev : player.current));
       setPlaying(player.playing);
       setVolume(player.volume);
-      setHostQueue(player.queue || []);
+      setHostQueue((prev) => (sameQueue(prev, player.queue) ? prev : player.queue || []));
       if (scrubPreview === null) setCurrentTime(player.position);
 
       if (player.error && player.error !== dismissedError) {
@@ -1495,13 +1515,23 @@ export default function Home() {
   // Sync Poll with Host Server
   useEffect(() => {
     const start = window.setTimeout(() => void syncRef.current(), 0);
-    const timer = window.setInterval(() => void syncRef.current(), 1000);
+    // A hidden tab has nothing to repaint, so skip the request and catch up
+    // as soon as it comes back into view
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      void syncRef.current();
+    }, 1000);
     const onFocus = () => void syncRef.current();
+    const onVisibility = () => {
+      if (!document.hidden) void syncRef.current();
+    };
     window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       window.clearTimeout(start);
       window.clearInterval(timer);
       window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 
