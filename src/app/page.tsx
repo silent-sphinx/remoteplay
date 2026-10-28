@@ -1945,7 +1945,7 @@ export default function Home() {
                         <CoverImage
                           src={
                             artist.artistImageUrl ||
-                            coverArtUrl(artist.coverArt, "240")
+                            coverArtUrl(artist.coverArt, "400")
                           }
                           alt={artist.name}
                           spinnerSize={22}
@@ -1997,7 +1997,7 @@ export default function Home() {
                 <div className={styles.heroContent}>
                   <div className={styles.heroArtwork}>
                     <CoverImage
-                      src={coverArtUrl(selectedAlbum.coverArt, "500")}
+                      src={coverArtUrl(selectedAlbum.coverArt, "400")}
                       alt={selectedAlbum.name}
                       spinnerSize={28}
                       fallback={<Disc3 size={64} color="var(--accent)" />}
@@ -2560,7 +2560,7 @@ export default function Home() {
                 <div className={styles.heroContent}>
                   <div className={styles.heroArtwork}>
                     <CoverImage
-                      src={coverArtUrl(selectedPlaylist.coverArt, "500")}
+                      src={coverArtUrl(selectedPlaylist.coverArt, "400")}
                       alt={selectedPlaylist.name}
                       spinnerSize={28}
                       fallback={<Library size={64} color="var(--accent)" />}
@@ -2770,7 +2770,7 @@ export default function Home() {
                                 <CoverImage
                                   src={
                                     artist.artistImageUrl ||
-                                    coverArtUrl(artist.coverArt, "160")
+                                    coverArtUrl(artist.coverArt, "120")
                                   }
                                   alt={artist.name}
                                   spinnerSize={16}
@@ -2910,7 +2910,7 @@ export default function Home() {
             <>
               <div className={styles.playerThumb}>
                 <CoverImage
-                  src={coverArtUrl(current.coverArt, "200")}
+                  src={coverArtUrl(current.coverArt, "120")}
                   alt={current.title}
                   spinnerSize={16}
                   fallback={
@@ -3155,7 +3155,9 @@ export default function Home() {
             <div
               className={styles.sheetBackdrop}
               style={{
-                backgroundImage: `url(${coverArtUrl(current.coverArt, "640")})`,
+                // Heavily blurred, so a thumbnail is indistinguishable and far
+                // cheaper to composite than the full-size artwork
+                backgroundImage: `url(${coverArtUrl(current.coverArt, "120")})`,
               }}
             />
           )}
@@ -3344,7 +3346,7 @@ export default function Home() {
         >
           <div className={styles.upNextPreviewArt}>
             <CoverImage
-              src={coverArtUrl(upNext.coverArt, "100")}
+              src={coverArtUrl(upNext.coverArt, "120")}
               alt=""
               spinnerSize={14}
               fallback={<Disc3 size={18} color="var(--accent)" />}
@@ -3436,7 +3438,7 @@ export default function Home() {
                         <EqualizerBars />
                       ) : (
                         <CoverImage
-                          src={coverArtUrl(song.coverArt, "100")}
+                          src={coverArtUrl(song.coverArt, "120")}
                           alt=""
                           spinnerSize={14}
                           fallback={<Music size={16} />}
@@ -3566,7 +3568,8 @@ export default function Home() {
             <div
               className={styles.kioskBackdrop}
               style={{
-                backgroundImage: `url(${coverArtUrl(current.coverArt, "640")})`,
+                // Blurred backdrop: a thumbnail keeps the kiosk view cheap on a Pi GPU
+                backgroundImage: `url(${coverArtUrl(current.coverArt, "120")})`,
               }}
             />
           )}
@@ -3742,7 +3745,7 @@ export default function Home() {
             >
               <div className={styles.upNextPreviewArt}>
                 <CoverImage
-                  src={coverArtUrl(upNext.coverArt, "100")}
+                  src={coverArtUrl(upNext.coverArt, "120")}
                   alt=""
                   spinnerSize={28}
                   fallback={<Disc3 size={32} color="var(--accent)" />}
