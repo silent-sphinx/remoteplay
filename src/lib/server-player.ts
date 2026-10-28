@@ -49,16 +49,16 @@ const globalRuntime = globalThis as typeof globalThis & {
 
 let childCounter = 0;
 
-// Quadratic taper: the UI slider is linear (0-1), but perceived loudness isn't,
-// so a linear mapping to mpv's amplitude makes the low end feel oversensitive.
+// mpv's volume property is already an amplitude percentage, so the 0-1 slider
+// maps straight onto it and the displayed percentage matches the host level.
 function volumeToMpv(linear: number): number {
   const clamped = Math.max(0, Math.min(1, linear));
-  return Math.round(clamped ** 2 * 100);
+  return Math.round(clamped * 100);
 }
 
 function mpvToVolume(percent: number): number {
   const clamped = Math.max(0, Math.min(100, percent));
-  return Math.max(0, Math.min(1, Math.sqrt(clamped / 100)));
+  return clamped / 100;
 }
 
 const runtime = (globalRuntime.__remoteplayPlayer ??= {
