@@ -96,13 +96,31 @@ process.once("SIGINT", () => {
 // Allows pointing at an mpv binary that isn't on PATH, e.g. a cask's app bundle on macOS.
 const MPV_BIN = process.env.MPV || "mpv";
 
-function findBackend(): PlayerBackend {
+// Probing spawns a process, and player state is polled once a second per client,
+// so cache the result. A hit is kept for the process lifetime; a miss is retried
+// so installing mpv is picked up without a restart.
+const BACKEND_PROBE_RETRY_MS = 30_000;
+let backendProbe: { value: PlayerBackend | null; at: number } | null = null;
+
+function probeBackend(): PlayerBackend | null {
+  if (backendProbe && (backendProbe.value || Date.now() - backendProbe.at < BACKEND_PROBE_RETRY_MS)) {
+    return backendProbe.value;
+  }
+  let value: PlayerBackend | null = null;
   try {
     execFileSync(MPV_BIN, ["--version"], { stdio: "ignore" });
-    return "mpv";
+    value = "mpv";
   } catch {
-    throw new Error("No server audio player found. Install mpv on the server, or set MPV to its path.");
+    /* Leave the backend unresolved and retry on the next probe. */
   }
+  backendProbe = { value, at: Date.now() };
+  return value;
+}
+
+function findBackend(): PlayerBackend {
+  const backend = probeBackend();
+  if (!backend) throw new Error("No server audio player found. Install mpv on the server, or set MPV to its path.");
+  return backend;
 }
 
 function elapsedPosition() {
@@ -214,26 +232,18 @@ export function getPlayerState() {
 }
 
 export function canPlay() {
-  try {
-    findBackend();
-    return true;
-  } catch {
-    return false;
-  }
+  return probeBackend() !== null;
 }
 
 export function getBackend(): PlayerBackend | null {
-  try {
-    return findBackend();
-  } catch {
-    return null;
-  }
+  return probeBackend();
 }
 
 export function getAudioControlCapabilities() {
+  const backend = probeBackend();
   return {
-    volume: getBackend() === "mpv",
-    outputSelection: getBackend() === "mpv",
+    volume: backend === "mpv",
+    outputSelection: backend === "mpv",
   };
 }
 

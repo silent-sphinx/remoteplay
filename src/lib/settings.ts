@@ -8,14 +8,23 @@ export type RemotePlaySettings = { audioOutput: string };
 const settingsPath = path.join(process.cwd(), ".remoteplay-settings.json");
 const defaults: RemotePlaySettings = { audioOutput: "auto" };
 
+// This process is the only writer, so the file is read once and kept in memory.
+let cachedSettings: RemotePlaySettings | null = null;
+
 export function getSettings(): RemotePlaySettings {
-  if (!existsSync(settingsPath)) return defaults;
-  try { return { ...defaults, ...JSON.parse(readFileSync(settingsPath, "utf8")) }; } catch { return defaults; }
+  if (cachedSettings) return cachedSettings;
+  let settings = defaults;
+  if (existsSync(settingsPath)) {
+    try { settings = { ...defaults, ...JSON.parse(readFileSync(settingsPath, "utf8")) }; } catch { settings = defaults; }
+  }
+  cachedSettings = settings;
+  return settings;
 }
 
 export function saveSettings(settings: Partial<RemotePlaySettings>) {
   const next = { ...getSettings(), ...settings };
   writeFileSync(settingsPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  cachedSettings = next;
   return next;
 }
 
@@ -36,7 +45,18 @@ function getMpvOutputs(): AudioOutput[] {
   return outputs;
 }
 
+// Enumerating devices spawns mpv (and pactl on Linux), which is far too costly
+// for the settings poll, so hold the list briefly between lookups.
+const OUTPUTS_TTL_MS = 30_000;
+let cachedOutputs: { value: AudioOutput[]; at: number } | null = null;
+
 export function getAudioOutputs(): AudioOutput[] {
+  if (cachedOutputs && Date.now() - cachedOutputs.at < OUTPUTS_TTL_MS) return cachedOutputs.value;
+  cachedOutputs = { value: readAudioOutputs(), at: Date.now() };
+  return cachedOutputs.value;
+}
+
+function readAudioOutputs(): AudioOutput[] {
   try {
     if (process.platform === "darwin" || process.platform === "linux") {
       const outputs = getMpvOutputs();
