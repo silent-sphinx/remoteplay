@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
@@ -257,6 +258,159 @@ function sameQueue(a: Song[], b: Song[] | undefined) {
   return a.length === b.length && a.every((song, index) => song.id === b[index].id);
 }
 
+// Playback position ticks once a second. Holding it outside React state keeps
+// the page tree out of that update: only the components below re-render.
+function createTimeStore() {
+  let snapshot: { position: number; preview: number | null } = {
+    position: 0,
+    preview: null,
+  };
+  const listeners = new Set<() => void>();
+
+  function emit() {
+    for (const listener of listeners) listener();
+  }
+
+  return {
+    getSnapshot: () => snapshot,
+    setPosition(position: number) {
+      if (position === snapshot.position) return;
+      snapshot = { position, preview: snapshot.preview };
+      emit();
+    },
+    setPreview(preview: number | null) {
+      if (preview === snapshot.preview) return;
+      snapshot = { position: snapshot.position, preview };
+      emit();
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+type TimeStore = ReturnType<typeof createTimeStore>;
+
+function useTime(store: TimeStore) {
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+}
+
+// Progress line pinned to the top edge of the mobile dock
+function MiniProgress({ store, duration }: { store: TimeStore; duration?: number }) {
+  const { position } = useTime(store);
+  return (
+    <div
+      className={styles.miniProgress}
+      style={{
+        transform: `scaleX(${duration ? Math.min(1, position / duration) : 0})`,
+      }}
+    />
+  );
+}
+
+function ProgressScrubber({
+  store,
+  duration,
+  showElapsed = false,
+  showThumb = false,
+  trackHeight,
+  maxWidth,
+  onScrubStart,
+  onScrubMove,
+  onScrubEnd,
+  onScrubCancel,
+}: {
+  store: TimeStore;
+  duration?: number;
+  showElapsed?: boolean;
+  showThumb?: boolean;
+  trackHeight?: string;
+  maxWidth?: string;
+  onScrubStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onScrubMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onScrubEnd: () => void;
+  onScrubCancel: () => void;
+}) {
+  const { position, preview } = useTime(store);
+  const shown = preview ?? position;
+  return (
+    <div className={styles.progressScrubber} style={maxWidth ? { maxWidth } : undefined}>
+      {showElapsed && <span>{formatTime(shown)}</span>}
+      <div
+        className={`${styles.scrubBarTrack} ${styles.scrubBarInteractive}`}
+        style={trackHeight ? { height: trackHeight } : undefined}
+        onPointerDown={onScrubStart}
+        onPointerMove={onScrubMove}
+        onPointerUp={onScrubEnd}
+        onPointerCancel={onScrubCancel}
+      >
+        <div
+          className={styles.scrubBarFill}
+          style={{
+            width: `${duration ? Math.min(100, (shown / duration) * 100) : 0}%`,
+            transition: preview === null ? undefined : "none",
+          }}
+        >
+          {showThumb && <div className={styles.scrubThumb} />}
+        </div>
+      </div>
+      <span>{formatTime(duration)}</span>
+    </div>
+  );
+}
+
+// Appears over the last 20s of the current track
+function UpNextPreview({
+  store,
+  duration,
+  song,
+  enabled,
+  className,
+  onClick,
+  spinnerSize,
+  iconSize,
+}: {
+  store: TimeStore;
+  duration?: number;
+  song: Song;
+  enabled: boolean;
+  className: string;
+  onClick: () => void;
+  spinnerSize: number;
+  iconSize: number;
+}) {
+  const { position } = useTime(store);
+  const remaining = duration ? duration - position : Infinity;
+  if (!enabled || remaining > 20 || remaining <= 0) return null;
+
+  return (
+    <button
+      className={className}
+      onClick={onClick}
+      aria-label={`Up next: ${song.title}${song.artist ? ` by ${song.artist}` : ""}`}
+    >
+      <div className={styles.upNextPreviewArt}>
+        <CoverImage
+          src={coverArtUrl(song.coverArt, "120")}
+          alt=""
+          spinnerSize={spinnerSize}
+          fallback={<Disc3 size={iconSize} color="var(--accent)" />}
+        />
+      </div>
+      <div className={styles.upNextPreviewMeta}>
+        <small>Up next in {Math.max(0, Math.ceil(remaining))}s</small>
+        <span>{song.title}</span>
+        <span className={styles.upNextPreviewArtist}>
+          {song.artist || "Unknown Artist"}
+        </span>
+      </div>
+    </button>
+  );
+}
+
 // Artwork with a loading spinner until the image resolves, and a graceful fallback on error
 function CoverImage({
   src,
@@ -436,8 +590,7 @@ export default function Home() {
   // the play command (e.g. a kiosk tablet) still knows what's up next.
   const [hostQueue, setHostQueue] = useState<Song[]>([]);
   const [current, setCurrent] = useState<Song | null>(null);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [scrubPreview, setScrubPreview] = useState<number | null>(null);
+  const [timeStore] = useState(createTimeStore);
   const [playing, setPlaying] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
@@ -830,7 +983,7 @@ export default function Home() {
       setPlaying(player.playing);
       setVolume(player.volume);
       setHostQueue((prev) => (sameQueue(prev, player.queue) ? prev : player.queue || []));
-      if (scrubPreview === null) setCurrentTime(player.position);
+      if (timeStore.getSnapshot().preview === null) timeStore.setPosition(player.position);
 
       if (player.error && player.error !== dismissedError) {
         setErrorNotice(`Host player: ${player.error}`);
@@ -845,7 +998,7 @@ export default function Home() {
   // Play Track on Host Server
   async function playSong(song: Song, nextQueue = queue, afterEnd?: number) {
     setCurrent(song);
-    setCurrentTime(0);
+    timeStore.setPosition(0);
     setQueue(nextQueue);
     // Shuffle picks a new random track on every advance, and repeat-one replays
     // the same track, so neither can be mirrored as a fixed server-side playlist.
@@ -886,7 +1039,7 @@ export default function Home() {
         action: playing ? "pause" : "resume",
       });
       setPlaying(player.playing);
-      setCurrentTime(player.position);
+      timeStore.setPosition(player.position);
     } catch {
       setErrorNotice("Host player playback command failed");
     }
@@ -946,32 +1099,32 @@ export default function Home() {
     if (!current?.duration) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    setScrubPreview(scrubRatioFromEvent(event) * current.duration);
+    timeStore.setPreview(scrubRatioFromEvent(event) * current.duration);
   }
 
   function moveScrub(event: ReactPointerEvent<HTMLDivElement>) {
-    if (scrubPreview === null || !current?.duration) return;
-    setScrubPreview(scrubRatioFromEvent(event) * current.duration);
+    if (timeStore.getSnapshot().preview === null || !current?.duration) return;
+    timeStore.setPreview(scrubRatioFromEvent(event) * current.duration);
   }
 
   function endScrub() {
-    if (scrubPreview === null) return;
-    const target = scrubPreview;
-    setCurrentTime(target);
+    const target = timeStore.getSnapshot().preview;
+    if (target === null) return;
+    timeStore.setPosition(target);
     void playerApi<{ playing: boolean; position: number }>({
       action: "seek",
       position: target,
     })
       .then((player) => {
         setPlaying(player.playing);
-        setCurrentTime(player.position);
+        timeStore.setPosition(player.position);
       })
       .catch(() => setErrorNotice("Host player seek failed"))
-      .finally(() => setScrubPreview(null));
+      .finally(() => timeStore.setPreview(null));
   }
 
   function cancelScrub() {
-    setScrubPreview(null);
+    timeStore.setPreview(null);
   }
 
   // Host Mute Toggle
@@ -1111,12 +1264,6 @@ export default function Home() {
       ? queue[currentQueueIndex + 1] ||
         (repeatMode === "all" ? queue[0] : undefined)
       : hostQueue[0];
-  const timeRemaining = current?.duration
-    ? current.duration - currentTime
-    : Infinity;
-  const showUpNextPreview =
-    !!upNext && !isShuffle && timeRemaining <= 20 && timeRemaining > 0;
-  const upNextCountdown = Math.max(0, Math.ceil(timeRemaining));
 
   // Bring the playing track into view when the queue opens or advances
   useEffect(() => {
@@ -2864,16 +3011,7 @@ export default function Home() {
       {/* NOW PLAYING FLOATING DOCK */}
       <footer className={styles.player}>
         {/* Mobile-only progress line pinned to the top edge of the dock */}
-        <div
-          className={styles.miniProgress}
-          style={{
-            transform: `scaleX(${
-              current?.duration
-                ? Math.min(1, currentTime / current.duration)
-                : 0
-            })`,
-          }}
-        />
+        <MiniProgress store={timeStore} duration={current?.duration} />
 
         {/* Left: Track Details (tap to expand Now Playing on mobile) */}
         <div
@@ -3005,31 +3143,16 @@ export default function Home() {
           </div>
 
           {/* Scrubber Progress Bar */}
-          <div className={styles.progressScrubber}>
-            <span>{formatTime(scrubPreview ?? currentTime)}</span>
-            <div
-              className={`${styles.scrubBarTrack} ${styles.scrubBarInteractive}`}
-              onPointerDown={startScrub}
-              onPointerMove={moveScrub}
-              onPointerUp={endScrub}
-              onPointerCancel={cancelScrub}
-            >
-              <div
-                className={styles.scrubBarFill}
-                style={{
-                  width: `${
-                    current?.duration
-                      ? Math.min(100, ((scrubPreview ?? currentTime) / current.duration) * 100)
-                      : 0
-                  }%`,
-                  transition: scrubPreview === null ? undefined : "none",
-                }}
-              >
-                <div className={styles.scrubThumb} />
-              </div>
-            </div>
-            <span>{formatTime(current?.duration)}</span>
-          </div>
+          <ProgressScrubber
+            store={timeStore}
+            duration={current?.duration}
+            showElapsed
+            showThumb
+            onScrubStart={startScrub}
+            onScrubMove={moveScrub}
+            onScrubEnd={endScrub}
+            onScrubCancel={cancelScrub}
+          />
         </div>
 
         {/* Right: Audio Visualizer & Utilities */}
@@ -3233,29 +3356,16 @@ export default function Home() {
           </div>
 
           {/* Progress */}
-          <div className={styles.progressScrubber} style={{ maxWidth: "none" }}>
-            <div
-              className={`${styles.scrubBarTrack} ${styles.scrubBarInteractive}`}
-              style={{ height: "6px" }}
-              onPointerDown={startScrub}
-              onPointerMove={moveScrub}
-              onPointerUp={endScrub}
-              onPointerCancel={cancelScrub}
-            >
-              <div
-                className={styles.scrubBarFill}
-                style={{
-                  width: `${
-                    current.duration
-                      ? Math.min(100, ((scrubPreview ?? currentTime) / current.duration) * 100)
-                      : 0
-                  }%`,
-                  transition: scrubPreview === null ? undefined : "none",
-                }}
-              />
-            </div>
-            <span>{formatTime(current.duration)}</span>
-          </div>
+          <ProgressScrubber
+            store={timeStore}
+            duration={current.duration}
+            trackHeight="6px"
+            maxWidth="none"
+            onScrubStart={startScrub}
+            onScrubMove={moveScrub}
+            onScrubEnd={endScrub}
+            onScrubCancel={cancelScrub}
+          />
 
           {/* Full transport */}
           <div className={styles.sheetTransport}>
@@ -3333,33 +3443,20 @@ export default function Home() {
       )}
 
       {/* Up next preview (last 20s of the current track) */}
-      {isMobile && nowPlayingOpen && current && showUpNextPreview && upNext && (
-        <button
+      {isMobile && nowPlayingOpen && current && upNext && (
+        <UpNextPreview
+          store={timeStore}
+          duration={current.duration}
+          song={upNext}
+          enabled={!isShuffle}
           className={styles.upNextPreview}
           onClick={() => {
             closeNowPlaying();
             setQueueOpen(true);
           }}
-          aria-label={`Up next: ${upNext.title}${
-            upNext.artist ? ` by ${upNext.artist}` : ""
-          }`}
-        >
-          <div className={styles.upNextPreviewArt}>
-            <CoverImage
-              src={coverArtUrl(upNext.coverArt, "120")}
-              alt=""
-              spinnerSize={14}
-              fallback={<Disc3 size={18} color="var(--accent)" />}
-            />
-          </div>
-          <div className={styles.upNextPreviewMeta}>
-            <small>Up next in {upNextCountdown}s</small>
-            <span>{upNext.title}</span>
-            <span className={styles.upNextPreviewArtist}>
-              {upNext.artist || "Unknown Artist"}
-            </span>
-          </div>
-        </button>
+          spinnerSize={14}
+          iconSize={18}
+        />
       )}
 
       {/* QUEUE DRAWER */}
@@ -3654,29 +3751,16 @@ export default function Home() {
           {/* Kiosk Big Touch Controls */}
           <div className={styles.kioskControls}>
             {/* Scrubber */}
-            <div className={styles.progressScrubber} style={{ maxWidth: "700px" }}>
-              <div
-                className={`${styles.scrubBarTrack} ${styles.scrubBarInteractive}`}
-                style={{ height: "8px" }}
-                onPointerDown={startScrub}
-                onPointerMove={moveScrub}
-                onPointerUp={endScrub}
-                onPointerCancel={cancelScrub}
-              >
-                <div
-                  className={styles.scrubBarFill}
-                  style={{
-                    width: `${
-                      current?.duration
-                        ? Math.min(100, ((scrubPreview ?? currentTime) / current.duration) * 100)
-                        : 0
-                    }%`,
-                    transition: scrubPreview === null ? undefined : "none",
-                  }}
-                />
-              </div>
-              <span>{formatTime(current?.duration)}</span>
-            </div>
+            <ProgressScrubber
+              store={timeStore}
+              duration={current?.duration}
+              trackHeight="8px"
+              maxWidth="700px"
+              onScrubStart={startScrub}
+              onScrubMove={moveScrub}
+              onScrubEnd={endScrub}
+              onScrubCancel={cancelScrub}
+            />
 
             {/* Huge Playback Buttons */}
             <div className={styles.transport} style={{ gap: "32px" }}>
@@ -3735,30 +3819,17 @@ export default function Home() {
           </div>
 
           {/* Up next preview (last 20s of the current track) */}
-          {showUpNextPreview && upNext && (
-            <button
+          {upNext && (
+            <UpNextPreview
+              store={timeStore}
+              duration={current?.duration}
+              song={upNext}
+              enabled={!isShuffle}
               className={`${styles.upNextPreview} ${styles.kioskUpNextPreview}`}
               onClick={() => setQueueOpen(true)}
-              aria-label={`Up next: ${upNext.title}${
-                upNext.artist ? ` by ${upNext.artist}` : ""
-              }`}
-            >
-              <div className={styles.upNextPreviewArt}>
-                <CoverImage
-                  src={coverArtUrl(upNext.coverArt, "120")}
-                  alt=""
-                  spinnerSize={28}
-                  fallback={<Disc3 size={32} color="var(--accent)" />}
-                />
-              </div>
-              <div className={styles.upNextPreviewMeta}>
-                <small>Up next in {upNextCountdown}s</small>
-                <span>{upNext.title}</span>
-                <span className={styles.upNextPreviewArtist}>
-                  {upNext.artist || "Unknown Artist"}
-                </span>
-              </div>
-            </button>
+              spinnerSize={28}
+              iconSize={32}
+            />
           )}
         </div>
       )}
