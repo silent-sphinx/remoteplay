@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "NODE_EXTRA_CA_CERTS=.config/remoteplay/amadeus.crt next dev",
+    "dev": "NODE_EXTRA_CA_CERTS=.config/remoteplay/antonio.crt next dev",
     "build": "next build",
-    "start": "NODE_EXTRA_CA_CERTS=.config/remoteplay/amadeus.crt next start",
+    "start": "NODE_EXTRA_CA_CERTS=.config/remoteplay/antonio.crt next start",
     "lint": "eslint"
   },
   "dependencies": {
     "lucide-react": "^1.63.0",
-    "next": "16.4.3",
+    "next": "16.4.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
@@ -20,7 +20,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.4.3",
+    "eslint-config-next": "16.4.6",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

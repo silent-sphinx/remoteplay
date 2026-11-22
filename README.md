@@ -180,6 +180,20 @@ journalctl --user -u remoteplay -f
 
 Do not run both service options at the same time because they would both try to use port 3000.
 
+## Configuration
+
+All options are read in `src/lib/config.ts` from environment variables, which can be set in `.env.local` (or `.env`). See `.env.example` for the full list. Only the Navidrome variables are required.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MPV` | `mpv` | Path to the mpv binary |
+| `REMOTEPLAY_STREAM_MAX_BITRATE` | `320` | Max bitrate (kbps) requested from Navidrome |
+| `REMOTEPLAY_DEFAULT_VOLUME` | `0.8` | Starting volume, 0 to 1 |
+| `REMOTEPLAY_SCROBBLE_THRESHOLD_SECONDS` | `240` | Listen time after which a play is scrobbled (capped at half the track) |
+| `REMOTEPLAY_SETTINGS_FILE` | `.remoteplay-settings.json` in the project root | Where the chosen audio output is saved |
+
+Cover cache options are described below.
+
 ## Cover art cache
 
 Album art is fetched from Navidrome once and then cached on disk, so repeat views are

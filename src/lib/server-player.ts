@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import net from "node:net";
 import { rmSync } from "node:fs";
+import { config } from "@/lib/config";
 import { subsonicUrl, scrobble } from "@/lib/subsonic";
 import { getSettings, isValidAudioOutput } from "@/lib/settings";
 
@@ -39,26 +40,24 @@ type PlayerRuntime = {
   scrobbledCurrent: boolean;
 };
 
-// Standard scrobble threshold: count a play once heard past half the track
-// or 4 minutes, whichever comes first, rather than waiting for full completion.
-const SCROBBLE_THRESHOLD_SECONDS = 240;
-
 const globalRuntime = globalThis as typeof globalThis & {
   __remoteplayPlayer?: PlayerRuntime;
 };
 
 let childCounter = 0;
 
-// mpv's volume property is already an amplitude percentage, so the 0-1 slider
-// maps straight onto it and the displayed percentage matches the host level.
+// mpv applies a cubic curve to its volume property (gain = (vol/100)^3), so a
+// 1:1 mapping is silent at low slider values. Invert it, and square the slider
+// so amplitude follows a quadratic taper, since loudness is perceived
+// logarithmically and a linear slider gets loud too quickly.
 function volumeToMpv(linear: number): number {
   const clamped = Math.max(0, Math.min(1, linear));
-  return Math.round(clamped * 100);
+  return Math.round(clamped ** (2 / 3) * 100);
 }
 
 function mpvToVolume(percent: number): number {
   const clamped = Math.max(0, Math.min(100, percent));
-  return clamped / 100;
+  return (clamped / 100) ** 1.5;
 }
 
 const runtime = (globalRuntime.__remoteplayPlayer ??= {
@@ -66,7 +65,7 @@ const runtime = (globalRuntime.__remoteplayPlayer ??= {
     current: null,
     playing: false,
     position: 0,
-    volume: 0.8,
+    volume: config.player.defaultVolume,
     startedAt: null,
     pausedAt: 0,
     error: null,
@@ -93,22 +92,18 @@ process.once("SIGINT", () => {
   process.exit(0);
 });
 
-// Allows pointing at an mpv binary that isn't on PATH, e.g. a cask's app bundle on macOS.
-const MPV_BIN = process.env.MPV || "mpv";
-
 // Probing spawns a process, and player state is polled once a second per client,
 // so cache the result. A hit is kept for the process lifetime; a miss is retried
 // so installing mpv is picked up without a restart.
-const BACKEND_PROBE_RETRY_MS = 30_000;
 let backendProbe: { value: PlayerBackend | null; at: number } | null = null;
 
 function probeBackend(): PlayerBackend | null {
-  if (backendProbe && (backendProbe.value || Date.now() - backendProbe.at < BACKEND_PROBE_RETRY_MS)) {
+  if (backendProbe && (backendProbe.value || Date.now() - backendProbe.at < config.player.backendProbeRetryMs)) {
     return backendProbe.value;
   }
   let value: PlayerBackend | null = null;
   try {
-    execFileSync(MPV_BIN, ["--version"], { stdio: "ignore" });
+    execFileSync(config.player.mpvBin, ["--version"], { stdio: "ignore" });
     value = "mpv";
   } catch {
     /* Leave the backend unresolved and retry on the next probe. */
@@ -295,7 +290,7 @@ export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset 
   const mpvIpcPath = `/tmp/remoteplay-mpv-${process.pid}.sock`;
   rmSync(mpvIpcPath, { force: true });
   runtime.mpvIpcPath = mpvIpcPath;
-  const child = spawn(MPV_BIN, [
+  const child = spawn(config.player.mpvBin, [
     "--no-video",
     "--really-quiet",
     "--force-window=no",
@@ -401,7 +396,7 @@ function handleMpvEvent(event: Record<string, unknown>) {
       state.pausedAt = event.data;
       if (state.playing) state.startedAt = Date.now();
       if (!runtime.scrobbledCurrent && state.current?.duration) {
-        const threshold = Math.min(state.current.duration / 2, SCROBBLE_THRESHOLD_SECONDS);
+        const threshold = Math.min(state.current.duration / 2, config.player.scrobbleThresholdSeconds);
         if (event.data >= threshold) {
           runtime.scrobbledCurrent = true;
           scrobble(state.current.id, true).catch(() => {});

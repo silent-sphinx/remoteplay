@@ -1,22 +1,12 @@
 import crypto from "node:crypto";
-
-const apiVersion = "1.16.1";
-const clientName = "remoteplay";
-
-export function getSubsonicConfig() {
-  const url = process.env.NAVIDROME_URL?.replace(/\/$/, "");
-  const username = process.env.NAVIDROME_USER;
-  const password = process.env.NAVIDROME_PASSWORD;
-  if (!url || !username || !password) return null;
-  return { url, username, password };
-}
+import { config as appConfig, getNavidromeConfig } from "@/lib/config";
 
 export function subsonicUrl(method: string, params: Record<string, string> = {}) {
-  const config = getSubsonicConfig();
+  const config = getNavidromeConfig();
   if (!config) return null;
   const salt = crypto.randomBytes(8).toString("hex");
   const token = crypto.createHash("md5").update(`${config.password}${salt}`).digest("hex");
-  const query = new URLSearchParams({ u: config.username, t: token, s: salt, v: apiVersion, c: clientName, f: "json", ...params });
+  const query = new URLSearchParams({ u: config.username, t: token, s: salt, v: appConfig.subsonic.apiVersion, c: appConfig.subsonic.clientName, f: "json", ...params });
   return `${config.url}/rest/${method}.view?${query.toString()}`;
 }
 

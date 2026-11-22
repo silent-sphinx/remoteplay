@@ -1,18 +1,13 @@
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { config } from "@/lib/config";
 import { subsonicUrl } from "@/lib/subsonic";
 
-// The service user is only guaranteed read access to the install directory, so the
-// cache prefers systemd's CacheDirectory and falls back to the temp dir.
-const cacheDir = process.env.REMOTEPLAY_COVER_CACHE
-  || (process.env.CACHE_DIRECTORY ? path.join(process.env.CACHE_DIRECTORY, "covers") : path.join(os.tmpdir(), "remoteplay-covers"));
-
-// Only the sizes the UI asks for are accepted, so hand-made URLs cannot grow the key space.
-const allowedSizes = new Set(["120", "400", "640"]);
+const { cacheDir, maxEntries, concurrency: maxUpstream, missingTtlMs } = config.cover;
+const allowedSizes = new Set<string>(config.cover.allowedSizes);
 
 const extensions: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
 const contentTypes: Record<string, string> = { jpg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif" };
@@ -55,14 +50,12 @@ async function writeCached(key: string, contentType: string, body: ArrayBuffer) 
 
 // Covers accumulate on a small disk, so keep the directory to a bounded number of
 // files, dropping the oldest writes first.
-const maxEntries = Number(process.env.REMOTEPLAY_COVER_CACHE_ENTRIES) || 3000;
-const pruneInterval = 200;
 let writesSincePrune = 0;
 let pruning = false;
 
 function schedulePrune() {
   writesSincePrune += 1;
-  if (writesSincePrune < pruneInterval || pruning) return;
+  if (writesSincePrune < config.cover.pruneEveryWrites || pruning) return;
   writesSincePrune = 0;
   pruning = true;
   prune().catch(() => { /* A full cache is not worth failing a request over. */ }).finally(() => { pruning = false; });
@@ -86,7 +79,6 @@ async function prune() {
 
 // Navidrome resizes on demand, and HTTP/2 lets a browser ask for a whole grid at
 // once, so cap the resizes this process can have in flight upstream.
-const maxUpstream = Number(process.env.REMOTEPLAY_COVER_CONCURRENCY) || 4;
 let active = 0;
 const waiting: (() => void)[] = [];
 
@@ -109,7 +101,6 @@ function release() {
 // briefly so a gridful of art-less albums does not re-ask on every render.
 const inflight = new Map<string, Promise<CoverResult>>();
 const missing = new Map<string, number>();
-const missingTtlMs = 5 * 60_000;
 
 export async function loadCover(id: string, size: string): Promise<CoverResult> {
   const key = cacheKey(id, size);

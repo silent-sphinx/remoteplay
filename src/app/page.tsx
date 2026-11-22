@@ -1727,7 +1727,6 @@ export default function Home() {
             <span className={styles.brandTitle}>
               REMOTE<span>PLAY</span>
             </span>
-            <span className={styles.brandSubtitle}>Navidrome Pi Controller</span>
           </div>
         </div>
 
@@ -1777,15 +1776,6 @@ export default function Home() {
 
         {/* Header Actions */}
         <div className={styles.headerActions}>
-          {/* Host Audio Status Pill */}
-          <div
-            className={styles.hostAudioPill}
-            title="Audio is played through the host machine (Raspberry Pi speaker/DAC)"
-          >
-            <Radio size={13} />
-            <span>Host Speaker Active</span>
-          </div>
-
           {/* Kiosk Mode Trigger */}
           <button
             className={styles.iconButton}

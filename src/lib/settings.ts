@@ -1,11 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
+import { config } from "@/lib/config";
 
 export type AudioOutput = { id: string; name: string };
 export type RemotePlaySettings = { audioOutput: string };
 
-const settingsPath = path.join(process.cwd(), ".remoteplay-settings.json");
+const settingsPath = config.settings.file;
 const defaults: RemotePlaySettings = { audioOutput: "auto" };
 
 // This process is the only writer, so the file is read once and kept in memory.
@@ -28,11 +28,8 @@ export function saveSettings(settings: Partial<RemotePlaySettings>) {
   return next;
 }
 
-// Allows pointing at an mpv binary that isn't on PATH, e.g. a cask's app bundle on macOS.
-const MPV_BIN = process.env.MPV || "mpv";
-
 function getMpvOutputs(): AudioOutput[] {
-  const help = execFileSync(MPV_BIN, ["--no-config", "--audio-device=help"], {
+  const help = execFileSync(config.player.mpvBin, ["--no-config", "--audio-device=help"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -45,13 +42,10 @@ function getMpvOutputs(): AudioOutput[] {
   return outputs;
 }
 
-// Enumerating devices spawns mpv (and pactl on Linux), which is far too costly
-// for the settings poll, so hold the list briefly between lookups.
-const OUTPUTS_TTL_MS = 30_000;
 let cachedOutputs: { value: AudioOutput[]; at: number } | null = null;
 
 export function getAudioOutputs(): AudioOutput[] {
-  if (cachedOutputs && Date.now() - cachedOutputs.at < OUTPUTS_TTL_MS) return cachedOutputs.value;
+  if (cachedOutputs && Date.now() - cachedOutputs.at < config.settings.outputsTtlMs) return cachedOutputs.value;
   cachedOutputs = { value: readAudioOutputs(), at: Date.now() };
   return cachedOutputs.value;
 }
