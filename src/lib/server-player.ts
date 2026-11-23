@@ -21,6 +21,7 @@ type PlayerState = {
   playing: boolean;
   position: number;
   volume: number;
+  balance: number;
   startedAt: number | null;
   pausedAt: number;
   error: string | null;
@@ -72,6 +73,7 @@ const runtime = (globalRuntime.__remoteplayPlayer ??= {
     playing: false,
     position: 0,
     volume: config.player.defaultVolume,
+    balance: getSettings().balance,
     startedAt: null,
     pausedAt: 0,
     error: null,
@@ -204,6 +206,7 @@ function observeMpvProperties(ipcPath: string) {
       ["observe_property", 2, "duration"],
       ["observe_property", 3, "volume"],
       ["observe_property", 4, "pause"],
+      ["observe_property", 5, "balance"],
     ].map((command) => JSON.stringify({ command }) ).join("\n") + "\n");
   });
   socket.on("close", () => {
@@ -221,6 +224,7 @@ export function getPlayerState() {
     playing: state.playing,
     position: elapsedPosition(),
     volume: state.volume,
+    balance: state.balance,
     error: state.error,
     available: Boolean(runtime.processRef) || canPlay(),
     queue: runtime.playlist.slice(runtime.playlistIndex + 1),
@@ -244,6 +248,7 @@ export function getAudioControlCapabilities() {
   const backend = probeBackend();
   return {
     volume: backend === "mpv",
+    balance: backend === "mpv",
     outputSelection: backend === "mpv",
   };
 }
@@ -303,6 +308,7 @@ export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset 
     "--idle=yes",
     `--input-ipc-server=${mpvIpcPath}`,
     `--volume=${volInt}`,
+    `--balance=${state.balance}`,
     `--replaygain=${config.player.loudnessNormalization ? "no" : config.player.replayGain}`,
     ...(config.player.loudnessNormalization ? ["--af=loudnorm=I=-16:LRA=11:TP=-1.5"] : ["--replaygain-clip"]),
     "--network-timeout=15",
@@ -420,6 +426,8 @@ function handleMpvEvent(event: Record<string, unknown>) {
       state.playing = !event.data;
       state.pausedAt = elapsedPosition();
       state.startedAt = state.playing ? Date.now() : null;
+    } else if (event.name === "balance" && typeof event.data === "number") {
+      state.balance = Math.max(-1, Math.min(1, event.data));
     }
     return;
   }
@@ -493,6 +501,13 @@ export function setVolume(volume: number) {
   state.volume = requestedVolume;
   if (runtime.backend === "mpv" && runtime.processRef) {
     sendMpvCommand({ command: ["set_property", "volume", volumeToMpv(state.volume)] });
+  }
+}
+
+export function setBalance(balance: number) {
+  state.balance = Math.max(-1, Math.min(1, balance));
+  if (runtime.backend === "mpv" && runtime.processRef) {
+    sendMpvCommand({ command: ["set_property", "balance", state.balance] });
   }
 }
 

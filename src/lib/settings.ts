@@ -3,19 +3,27 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { config } from "@/lib/config";
 
 export type AudioOutput = { id: string; name: string };
-export type RemotePlaySettings = { audioOutput: string };
+export type RemotePlaySettings = { audioOutput: string; balance: number };
 
 const settingsPath = config.settings.file;
-const defaults: RemotePlaySettings = { audioOutput: "auto" };
+const defaults: RemotePlaySettings = { audioOutput: "auto", balance: 0 };
 
 // This process is the only writer, so the file is read once and kept in memory.
 let cachedSettings: RemotePlaySettings | null = null;
 
 export function getSettings(): RemotePlaySettings {
   if (cachedSettings) return cachedSettings;
-  let settings = defaults;
+  let settings: RemotePlaySettings = defaults;
   if (existsSync(settingsPath)) {
-    try { settings = { ...defaults, ...JSON.parse(readFileSync(settingsPath, "utf8")) }; } catch { settings = defaults; }
+    try {
+      const stored = JSON.parse(readFileSync(settingsPath, "utf8")) as Partial<RemotePlaySettings>;
+      const balance = typeof stored.balance === "number" && Number.isFinite(stored.balance)
+        ? Math.max(-1, Math.min(1, stored.balance))
+        : 0;
+      settings = { ...defaults, ...stored, balance };
+    } catch {
+      settings = defaults;
+    }
   }
   cachedSettings = settings;
   return settings;
