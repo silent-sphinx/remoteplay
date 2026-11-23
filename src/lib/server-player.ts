@@ -281,6 +281,7 @@ export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset 
     sendMpvCommands([
       ...loadCommands,
       { command: ["set_property", "pause", false] },
+      { command: ["set_property", "balance", state.balance] },
     ]);
     setTrackState(song, startOffset);
     return;
@@ -308,7 +309,6 @@ export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset 
     "--idle=yes",
     `--input-ipc-server=${mpvIpcPath}`,
     `--volume=${volInt}`,
-    `--balance=${state.balance}`,
     `--replaygain=${config.player.loudnessNormalization ? "no" : config.player.replayGain}`,
     ...(config.player.loudnessNormalization ? ["--af=loudnorm=I=-16:LRA=11:TP=-1.5"] : ["--replaygain-clip"]),
     "--network-timeout=15",
@@ -385,6 +385,7 @@ export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset 
   sendMpvCommands([
     ...loadCommands,
     { command: ["set_property", "pause", false] },
+    { command: ["set_property", "balance", state.balance] },
   ]);
   if (startOffset > 0) {
     sendMpvCommand({ command: ["seek", startOffset, "absolute", "exact"] });
