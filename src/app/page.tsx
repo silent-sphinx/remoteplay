@@ -1004,7 +1004,6 @@ export default function Home() {
       setCurrent((prev) => (sameSong(prev, player.current) ? prev : player.current));
       setPlaying(player.playing);
       setVolume(player.volume);
-      setAudioBalance(player.balance);
       setHostQueue((prev) => (sameQueue(prev, player.queue) ? prev : player.queue || []));
       if (timeStore.getSnapshot().preview === null) timeStore.setPosition(player.position);
 

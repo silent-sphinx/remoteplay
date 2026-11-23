@@ -67,6 +67,24 @@ function mpvToVolume(percent: number): number {
   return Math.sqrt((gain - MIN_AUDIBLE_GAIN) / (1 - MIN_AUDIBLE_GAIN));
 }
 
+function balanceFilter(balance: number) {
+  const clamped = Math.max(-1, Math.min(1, balance));
+  if (clamped === 0) return null;
+  const left = clamped >= 0 ? 1 - clamped : 1;
+  const right = clamped <= 0 ? 1 + clamped : 1;
+  return `pan=stereo|c0=c0*${left.toFixed(3)}|c1=c1*${right.toFixed(3)}`;
+}
+
+function playbackFilters(balance: number) {
+  const filters: string[] = [];
+  if (config.player.loudnessNormalization) {
+    filters.push("loudnorm=I=-16:LRA=11:TP=-1.5");
+  }
+  const pan = balanceFilter(balance);
+  if (pan) filters.push(pan);
+  return filters;
+}
+
 const runtime = (globalRuntime.__remoteplayPlayer ??= {
   state: {
     current: null,
@@ -280,7 +298,7 @@ export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset 
     sendMpvCommands([
       ...loadCommands,
       { command: ["set_property", "pause", false] },
-      { command: ["set_property", "balance", state.balance] },
+      { command: ["set_property", "af", playbackFilters(state.balance).length ? playbackFilters(state.balance).join(",") : ""] },
     ]);
     setTrackState(song, startOffset);
     return;
@@ -309,7 +327,9 @@ export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset 
     `--input-ipc-server=${mpvIpcPath}`,
     `--volume=${volInt}`,
     `--replaygain=${config.player.loudnessNormalization ? "no" : config.player.replayGain}`,
-    ...(config.player.loudnessNormalization ? ["--af=loudnorm=I=-16:LRA=11:TP=-1.5"] : ["--replaygain-clip"]),
+    ...(playbackFilters(state.balance).length
+      ? [`--af=${playbackFilters(state.balance).join(",")}`]
+      : ["--replaygain-clip"]),
     "--network-timeout=15",
     ...(output !== "auto" ? [`--audio-device=${output}`] : []),
   ], {
@@ -384,7 +404,6 @@ export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset 
   sendMpvCommands([
     ...loadCommands,
     { command: ["set_property", "pause", false] },
-    { command: ["set_property", "balance", state.balance] },
   ]);
   if (startOffset > 0) {
     sendMpvCommand({ command: ["seek", startOffset, "absolute", "exact"] });
@@ -505,7 +524,8 @@ export function setVolume(volume: number) {
 export function setBalance(balance: number) {
   state.balance = Math.max(-1, Math.min(1, balance));
   if (runtime.backend === "mpv" && runtime.processRef) {
-    sendMpvCommand({ command: ["set_property", "balance", state.balance] });
+    const filters = playbackFilters(state.balance);
+    sendMpvCommand({ command: ["set_property", "af", filters.length ? filters.join(",") : ""] });
   }
 }
 
