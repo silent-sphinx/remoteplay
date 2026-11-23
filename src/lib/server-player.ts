@@ -206,7 +206,6 @@ function observeMpvProperties(ipcPath: string) {
       ["observe_property", 2, "duration"],
       ["observe_property", 3, "volume"],
       ["observe_property", 4, "pause"],
-      ["observe_property", 5, "balance"],
     ].map((command) => JSON.stringify({ command }) ).join("\n") + "\n");
   });
   socket.on("close", () => {
@@ -427,8 +426,6 @@ function handleMpvEvent(event: Record<string, unknown>) {
       state.playing = !event.data;
       state.pausedAt = elapsedPosition();
       state.startedAt = state.playing ? Date.now() : null;
-    } else if (event.name === "balance" && typeof event.data === "number") {
-      state.balance = Math.max(-1, Math.min(1, event.data));
     }
     return;
   }
