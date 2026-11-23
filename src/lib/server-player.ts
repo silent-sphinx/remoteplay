@@ -70,9 +70,7 @@ function mpvToVolume(percent: number): number {
 function balanceFilter(balance: number) {
   const clamped = Math.max(-1, Math.min(1, balance));
   if (clamped === 0) return null;
-  const left = clamped >= 0 ? 1 - clamped : 1;
-  const right = clamped <= 0 ? 1 + clamped : 1;
-  return `lavfi=[pan=stereo|c0=c0*${left.toFixed(3)}|c1=c1*${right.toFixed(3)}]`;
+  return `lavfi=[stereotools=balance_out=${clamped.toFixed(3)}]`;
 }
 
 function playbackFilters(balance: number) {
