@@ -72,7 +72,7 @@ function balanceFilter(balance: number) {
   if (clamped === 0) return null;
   const left = clamped >= 0 ? 1 - clamped : 1;
   const right = clamped <= 0 ? 1 + clamped : 1;
-  return `pan=stereo|c0=c0*${left.toFixed(3)}|c1=c1*${right.toFixed(3)}`;
+  return `lavfi=[pan=stereo|c0=c0*${left.toFixed(3)}|c1=c1*${right.toFixed(3)}]`;
 }
 
 function playbackFilters(balance: number) {
@@ -298,7 +298,7 @@ export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset 
     sendMpvCommands([
       ...loadCommands,
       { command: ["set_property", "pause", false] },
-      { command: ["set_property", "af", playbackFilters(state.balance).length ? playbackFilters(state.balance).join(",") : ""] },
+      { command: ["af", "set", playbackFilters(state.balance).join(",")] },
     ]);
     setTrackState(song, startOffset);
     return;
@@ -525,7 +525,7 @@ export function setBalance(balance: number) {
   state.balance = Math.max(-1, Math.min(1, balance));
   if (runtime.backend === "mpv" && runtime.processRef) {
     const filters = playbackFilters(state.balance);
-    sendMpvCommand({ command: ["set_property", "af", filters.length ? filters.join(",") : ""] });
+    sendMpvCommand({ command: ["af", "set", filters.join(",")] });
   }
 }
 
