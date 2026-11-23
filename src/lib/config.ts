@@ -36,6 +36,8 @@ export const config = {
     // Allows pointing at an mpv binary that isn't on PATH, e.g. a cask's app bundle on macOS.
     mpvBin: process.env.MPV || "mpv",
     defaultVolume: unitInterval("REMOTEPLAY_DEFAULT_VOLUME", 0.8),
+    // Gain given to the lowest non-zero slider value; capped below 1 so the curve stays invertible.
+    minVolumeGain: Math.min(unitInterval("REMOTEPLAY_MIN_VOLUME_GAIN", 0.005), 0.5),
     // Standard scrobble threshold: count a play once heard past half the track
     // or 4 minutes, whichever comes first, rather than waiting for full completion.
     scrobbleThresholdSeconds: positiveInt("REMOTEPLAY_SCROBBLE_THRESHOLD_SECONDS", 240),

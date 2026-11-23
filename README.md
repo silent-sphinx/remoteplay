@@ -1,14 +1,15 @@
 # RemotePlay
 
-A lightweight Navidrome/Subsonic music controller designed to run on a Raspberry Pi.
+A lightweight Navidrome/Subsonic music controller designed to run on a Raspberry Pi. Control music over the network via HTTP webpage, audio ALWAYS comes out of the server, not the web browser.
 
 ![Overview.png](Overview.png)
 
-Control music over the network via HTTP webpage, audio ALWAYS comes out of the server, not the web browser.
-
 > [!IMPORTANT]
-> This app is 100% vibe-coded, the code has undergone manual review.
-> This is intended as a side-hobby project to allow my Raspberry Pi to act as a music client, not a production audio server intended for deployment.
+> This is a disclaimer that Remoteplay has been created via the assistance of Large Language Models, primarily Claude. The code has been manually reviewed.
+> 
+> Remoteplay was intended as a quick side-hobby project to allow a 
+> Raspberry Pi to act as a remote music client, you should not use it 
+> for production or anticipate reliable ongoing updates.
 
 ## Configure
 
@@ -189,6 +190,7 @@ All options are read in `src/lib/config.ts` from environment variables, which ca
 | `MPV` | `mpv` | Path to the mpv binary |
 | `REMOTEPLAY_STREAM_MAX_BITRATE` | `320` | Max bitrate (kbps) requested from Navidrome |
 | `REMOTEPLAY_DEFAULT_VOLUME` | `0.8` | Starting volume, 0 to 1 |
+| `REMOTEPLAY_MIN_VOLUME_GAIN` | `0.005` | Gain of the lowest non-zero slider value, 0 to 0.5. Raise it if low slider values are silent, lower it if they are too loud |
 | `REMOTEPLAY_SCROBBLE_THRESHOLD_SECONDS` | `240` | Listen time after which a play is scrobbled (capped at half the track) |
 | `REMOTEPLAY_SETTINGS_FILE` | `.remoteplay-settings.json` in the project root | Where the chosen audio output is saved |
 

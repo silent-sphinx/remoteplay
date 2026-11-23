@@ -47,17 +47,23 @@ const globalRuntime = globalThis as typeof globalThis & {
 let childCounter = 0;
 
 // mpv applies a cubic curve to its volume property (gain = (vol/100)^3), so a
-// 1:1 mapping is silent at low slider values. Invert it, and square the slider
-// so amplitude follows a quadratic taper, since loudness is perceived
-// logarithmically and a linear slider gets loud too quickly.
+// 1:1 mapping is silent at low slider values. Square the slider so amplitude
+// follows a quadratic taper, since loudness is perceived logarithmically.
+// Squaring alone leaves everything under ~13% inaudible, so any non-zero slider
+// value is lifted onto a gain floor; only 0 is true silence.
+const MIN_AUDIBLE_GAIN = config.player.minVolumeGain;
+
 function volumeToMpv(linear: number): number {
   const clamped = Math.max(0, Math.min(1, linear));
-  return Math.round(clamped ** (2 / 3) * 100);
+  if (clamped === 0) return 0;
+  const gain = MIN_AUDIBLE_GAIN + (1 - MIN_AUDIBLE_GAIN) * clamped ** 2;
+  return Math.round(gain ** (1 / 3) * 100);
 }
 
 function mpvToVolume(percent: number): number {
-  const clamped = Math.max(0, Math.min(100, percent));
-  return (clamped / 100) ** 1.5;
+  const gain = (Math.max(0, Math.min(100, percent)) / 100) ** 3;
+  if (gain <= MIN_AUDIBLE_GAIN) return 0;
+  return Math.sqrt((gain - MIN_AUDIBLE_GAIN) / (1 - MIN_AUDIBLE_GAIN));
 }
 
 const runtime = (globalRuntime.__remoteplayPlayer ??= {
@@ -405,7 +411,9 @@ function handleMpvEvent(event: Record<string, unknown>) {
     } else if (event.name === "duration" && typeof event.data === "number" && state.current) {
       state.current = { ...state.current, duration: event.data };
     } else if (event.name === "volume" && typeof event.data === "number") {
-      state.volume = mpvToVolume(event.data);
+      // Ignore the echo of our own set_property: the mpv value is rounded, so
+      // converting it back would nudge (or zero) the requested slider value.
+      if (Math.round(event.data) !== volumeToMpv(state.volume)) state.volume = mpvToVolume(event.data);
     } else if (event.name === "pause" && typeof event.data === "boolean") {
       state.playing = !event.data;
       state.pausedAt = elapsedPosition();
