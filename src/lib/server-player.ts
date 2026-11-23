@@ -21,7 +21,6 @@ type PlayerState = {
   playing: boolean;
   position: number;
   volume: number;
-  balance: number;
   startedAt: number | null;
   pausedAt: number;
   error: string | null;
@@ -67,19 +66,11 @@ function mpvToVolume(percent: number): number {
   return Math.sqrt((gain - MIN_AUDIBLE_GAIN) / (1 - MIN_AUDIBLE_GAIN));
 }
 
-function balanceFilter(balance: number) {
-  const clamped = Math.max(-1, Math.min(1, balance));
-  if (clamped === 0) return null;
-  return `lavfi=[stereotools=balance_out=${clamped.toFixed(3)}]`;
-}
-
-function playbackFilters(balance: number) {
+function playbackFilters() {
   const filters: string[] = [];
   if (config.player.loudnessNormalization) {
     filters.push("loudnorm=I=-16:LRA=11:TP=-1.5");
   }
-  const pan = balanceFilter(balance);
-  if (pan) filters.push(pan);
   return filters;
 }
 
@@ -89,7 +80,6 @@ const runtime = (globalRuntime.__remoteplayPlayer ??= {
     playing: false,
     position: 0,
     volume: config.player.defaultVolume,
-    balance: getSettings().balance,
     startedAt: null,
     pausedAt: 0,
     error: null,
@@ -239,7 +229,6 @@ export function getPlayerState() {
     playing: state.playing,
     position: elapsedPosition(),
     volume: state.volume,
-    balance: state.balance,
     error: state.error,
     available: Boolean(runtime.processRef) || canPlay(),
     queue: runtime.playlist.slice(runtime.playlistIndex + 1),
@@ -263,7 +252,6 @@ export function getAudioControlCapabilities() {
   const backend = probeBackend();
   return {
     volume: backend === "mpv",
-    balance: backend === "mpv",
     outputSelection: backend === "mpv",
   };
 }
@@ -296,7 +284,7 @@ export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset 
     sendMpvCommands([
       ...loadCommands,
       { command: ["set_property", "pause", false] },
-      { command: ["af", "set", playbackFilters(state.balance).join(",")] },
+      { command: ["af", "set", playbackFilters().join(",")] },
     ]);
     setTrackState(song, startOffset);
     return;
@@ -325,8 +313,8 @@ export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset 
     `--input-ipc-server=${mpvIpcPath}`,
     `--volume=${volInt}`,
     `--replaygain=${config.player.loudnessNormalization ? "no" : config.player.replayGain}`,
-    ...(playbackFilters(state.balance).length
-      ? [`--af=${playbackFilters(state.balance).join(",")}`]
+    ...(playbackFilters().length
+      ? [`--af=${playbackFilters().join(",")}`]
       : ["--replaygain-clip"]),
     "--network-timeout=15",
     ...(output !== "auto" ? [`--audio-device=${output}`] : []),
@@ -516,13 +504,6 @@ export function setVolume(volume: number) {
   state.volume = requestedVolume;
   if (runtime.backend === "mpv" && runtime.processRef) {
     sendMpvCommand({ command: ["set_property", "volume", volumeToMpv(state.volume)] });
-  }
-}
-
-export function setBalance(balance: number) {
-  state.balance = Math.max(-1, Math.min(1, balance));
-  if (runtime.backend === "mpv" && runtime.processRef) {
-    sendMpvCommand({ command: ["af", "set", playbackFilters(state.balance).join(",")] });
   }
 }
 

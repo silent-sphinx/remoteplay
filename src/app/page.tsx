@@ -594,7 +594,6 @@ export default function Home() {
   const [timeStore] = useState(createTimeStore);
   const [playing, setPlaying] = useState(false);
   const [volume, setVolume] = useState(0.8);
-  const [audioBalance, setAudioBalance] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [isShuffle, setIsShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<"off" | "all" | "one">("off");
@@ -637,11 +636,11 @@ export default function Home() {
   const [hostInfo, setHostInfo] = useState<{
     platform: string;
     backend: string | null;
-    capabilities: { volume: boolean; balance: boolean; outputSelection: boolean };
+    capabilities: { volume: boolean; outputSelection: boolean };
   }>({
     platform: "",
     backend: null,
-    capabilities: { volume: false, balance: false, outputSelection: false },
+    capabilities: { volume: false, outputSelection: false },
   });
   const [navidromeStatus, setNavidromeStatus] = useState<{ connected: boolean; version: string | null }>({
     connected: false,
@@ -974,7 +973,6 @@ export default function Home() {
         playing: boolean;
         position: number;
         volume: number;
-        balance: number;
         error: string | null;
         queue: Song[];
         ended: { seq: number; songId: string; ago: number } | null;
@@ -1564,18 +1562,17 @@ export default function Home() {
   // Settings Init
   useEffect(() => {
     void settingsApi<{
-      settings: { audioOutput: string; balance: number };
+      settings: { audioOutput: string };
       outputs: { id: string; name: string }[];
       host: {
         platform: string;
         backend: string | null;
-        capabilities: { volume: boolean; balance: boolean; outputSelection: boolean };
+        capabilities: { volume: boolean; outputSelection: boolean };
       };
       navidrome: { connected: boolean; version: string | null };
     }>()
       .then((data) => {
         setAudioOutput(data.settings.audioOutput);
-        setAudioBalance(data.settings.balance);
         setAudioOutputs(data.outputs);
         setHostInfo(data.host);
         setNavidromeStatus(data.navidrome);
@@ -3654,38 +3651,6 @@ export default function Home() {
                   : hostInfo.backend
                     ? `Install mpv on ${formatPlatform(hostInfo.platform)} to select outputs and change volume while playing.`
                     : "Install mpv on the host to enable server playback."}
-              </small>
-            </div>
-
-            {/* Left/Right Balance */}
-            <div className={styles.settingGroup}>
-              <label className={styles.settingLabel} htmlFor="audio-balance">
-                L/R BALANCE
-              </label>
-              <div className={styles.balanceControl}>
-                <span aria-hidden="true">L</span>
-                <input
-                  id="audio-balance"
-                  type="range"
-                  min="-100"
-                  max="100"
-                  step="1"
-                  value={Math.round(audioBalance * 100)}
-                  disabled={!hostInfo.capabilities.balance}
-                  className={styles.balanceSlider}
-                  onChange={(event) => {
-                    const balance = Number(event.target.value) / 100;
-                    setAudioBalance(balance);
-                    void settingsApi({ balance });
-                  }}
-                  aria-label="Left and right audio balance"
-                />
-                <span aria-hidden="true">R</span>
-              </div>
-              <small className={styles.settingHint}>
-                {hostInfo.capabilities.balance
-                  ? `${audioBalance === 0 ? "Balanced" : audioBalance < 0 ? `Left ${Math.round(Math.abs(audioBalance) * 100)}%` : `Right ${Math.round(audioBalance * 100)}%`}`
-                  : "Install mpv on the host to adjust left/right balance."}
               </small>
             </div>
 
