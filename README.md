@@ -191,7 +191,8 @@ All options are read in `src/lib/config.ts` from environment variables, which ca
 | `REMOTEPLAY_STREAM_MAX_BITRATE` | `320` | Max bitrate (kbps) requested from Navidrome |
 | `REMOTEPLAY_DEFAULT_VOLUME` | `0.8` | Starting volume, 0 to 1 |
 | `REMOTEPLAY_MIN_VOLUME_GAIN` | `0.005` | Gain of the lowest non-zero slider value, 0 to 0.5. Raise it if low slider values are silent, lower it if they are too loud |
-| `REMOTEPLAY_REPLAYGAIN` | `track` | ReplayGain mode: `track` equalises each track, `album` preserves relative album levels, or `no` disables normalisation |
+| `REMOTEPLAY_LOUDNESS_NORMALIZATION` | `true` | Applies real-time loudness normalisation to every track at approximately -16 LUFS |
+| `REMOTEPLAY_REPLAYGAIN` | `track` | ReplayGain mode used only when loudness normalisation is disabled; `track` equalises tracks, `album` preserves relative album levels, or `no` disables it |
 | `REMOTEPLAY_SCROBBLE_THRESHOLD_SECONDS` | `240` | Listen time after which a play is scrobbled (capped at half the track) |
 | `REMOTEPLAY_SETTINGS_FILE` | `.remoteplay-settings.json` in the project root | Where the chosen audio output is saved |
 
@@ -246,7 +247,7 @@ sudo apt install mpv
 
 RemotePlay uses a persistent `mpv` process for server playback. The browser is only a remote control and can be closed without stopping the server process immediately.
 
-`mpv` provides per-output selection, seamless live volume control, interactive seeking, and synchronized playback progress through its JSON IPC interface. ReplayGain metadata is used for track-normalised loudness by default; set `REMOTEPLAY_REPLAYGAIN=album` to retain album-relative levels or `no` to disable it.
+`mpv` provides per-output selection, seamless live volume control, interactive seeking, and synchronized playback progress through its JSON IPC interface. Real-time loudness normalisation is enabled by default at approximately -16 LUFS, using the FFmpeg loudnorm filter for every track regardless of ReplayGain metadata. Set `REMOTEPLAY_LOUDNESS_NORMALIZATION=false` to disable it and use `REMOTEPLAY_REPLAYGAIN` (`track`, `album`, or `no`) instead.
 
 ## Included controls
 

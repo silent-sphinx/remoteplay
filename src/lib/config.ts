@@ -21,6 +21,13 @@ function replayGain(name: string, fallback: "no" | "track" | "album") {
   return value === "no" || value === "track" || value === "album" ? value : fallback;
 }
 
+function enabled(name: string, fallback: boolean) {
+  const value = process.env[name]?.toLowerCase();
+  if (value === "true" || value === "1" || value === "yes") return true;
+  if (value === "false" || value === "0" || value === "no") return false;
+  return fallback;
+}
+
 // Read on each call so credentials are never captured at import time.
 export function getNavidromeConfig() {
   const url = process.env.NAVIDROME_URL?.replace(/\/$/, "");
@@ -42,6 +49,7 @@ export const config = {
     mpvBin: process.env.MPV || "mpv",
     defaultVolume: unitInterval("REMOTEPLAY_DEFAULT_VOLUME", 0.8),
     replayGain: replayGain("REMOTEPLAY_REPLAYGAIN", "track"),
+    loudnessNormalization: enabled("REMOTEPLAY_LOUDNESS_NORMALIZATION", true),
     // Gain given to the lowest non-zero slider value; capped below 1 so the curve stays invertible.
     minVolumeGain: Math.min(unitInterval("REMOTEPLAY_MIN_VOLUME_GAIN", 0.005), 0.5),
     // Standard scrobble threshold: count a play once heard past half the track
