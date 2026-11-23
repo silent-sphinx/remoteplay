@@ -303,6 +303,8 @@ export function play(song: ServerSong, upcoming: ServerSong[] = [], startOffset 
     "--idle=yes",
     `--input-ipc-server=${mpvIpcPath}`,
     `--volume=${volInt}`,
+    `--replaygain=${config.player.replayGain}`,
+    "--replaygain-clip",
     "--network-timeout=15",
     ...(output !== "auto" ? [`--audio-device=${output}`] : []),
   ], {
