@@ -23,11 +23,16 @@ function cacheKey(id: string, size: string) {
   return `${crypto.createHash("sha1").update(id).digest("hex")}-${size}`;
 }
 
+// The cache lives outside the build, so stop Turbopack tracing the whole project for it.
+function cachePath(key: string, extension: string) {
+  return path.join(/*turbopackIgnore: true*/ cacheDir, `${key}.${extension}`);
+}
+
 async function findCached(key: string) {
   for (const extension of Object.keys(contentTypes)) {
-    const file = path.join(cacheDir, `${key}.${extension}`);
+    const file = cachePath(key, extension);
     try {
-      const info = await stat(file);
+      const info = await stat(/*turbopackIgnore: true*/ file);
       return { file, length: info.size, contentType: contentTypes[extension] };
     } catch { /* Try the next encoding. */ }
   }
@@ -37,7 +42,7 @@ async function findCached(key: string) {
 async function writeCached(key: string, contentType: string, body: ArrayBuffer) {
   const extension = extensions[contentType];
   if (!extension) return;
-  const file = path.join(cacheDir, `${key}.${extension}`);
+  const file = cachePath(key, extension);
   const temp = `${file}.${crypto.randomBytes(6).toString("hex")}.tmp`;
   try {
     await mkdir(cacheDir, { recursive: true });

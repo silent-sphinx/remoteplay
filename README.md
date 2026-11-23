@@ -113,7 +113,7 @@ RemotePlay is then available at `http://<linux-host-ip>:3000`. View runtime logs
 sudo journalctl -u remoteplay -f
 ```
 
-To update an existing installation:
+#### To update an existing installation:
 
 ```bash
 cd /opt/remoteplay
